@@ -52,7 +52,13 @@ public; you clone it read-only into `/tmp/oss-scout`. **Never push to it.**
    - Is the issue well-specified, and is a maintainer likely to accept an outside fix?
    - Prefer variety across projects while `wide_phase_until` (in `targets.toml`) is in the future.
    - Skip anything that needs a design decision, huge refactors, or hardware you can't access.
-4. For each pick:
+4. For each pick (keep usage low: the scanner already did the searching for free):
+   - If it's an obvious small fix (docs, a typo, a clearly-scoped one-liner), do the
+     analysis yourself.
+   - Otherwise, after cloning (step b), hand the thinking to the `root-cause-analyst`
+     subagent (it runs on a stronger model): give it the issue URL, the clone path
+     and the mode. Use its plan for the draft (draft mode) and the briefing. Call it
+     at most once per pick, and never for skipped issues.
    a. Read the project's CONTRIBUTING / AI-policy files in full (they're listed in
       `repo_info.policy_files`). Note the CLA, commit-message, test and disclosure rules.
    b. Shallow-clone the repo into `/tmp/work/<slug>` (`git clone --depth 50`). Use
