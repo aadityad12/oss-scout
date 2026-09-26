@@ -189,6 +189,7 @@ def test_activity_detects_claims_and_prs():
     act = filters.activity(gh, "o/r", 1, claim_window_days=21, now=NOW)
     assert act["linked_open_prs"] == ["https://x/pull/9"]
     assert [c["by"] for c in act["recent_claims"]] == ["someone"]
+    assert [c["by"] for c in act["discussion"]] == ["someone", "old"]
 
 
 @pytest.mark.parametrize("body,claim", [

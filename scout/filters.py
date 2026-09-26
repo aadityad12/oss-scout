@@ -15,6 +15,8 @@ CLAIM = re.compile(
     r"i'?ve (?:opened|submitted|raised) a pr|pr (?:is )?(?:up|open)\b",
     re.I,
 )
+DISCUSSION_KEEP = 5
+
 BLOCKING_LABELS = re.compile(
     r"wontfix|won't fix|duplicate|invalid|blocked|on.?hold|needs.?design|needs.?decision|"
     r"discussion|question|stale|pr submitted|in progress|assigned",
@@ -31,7 +33,7 @@ def activity(gh: GitHub, repo: str, number: int, claim_window_days: int,
     """Read the issue timeline once and report linked PRs and claim comments."""
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=claim_window_days)
-    linked_open_prs, claims, maintainer_comments = [], [], 0
+    linked_open_prs, claims, maintainer_comments, discussion = [], [], 0, []
     for ev in gh.paginate(f"repos/{repo}/issues/{number}/timeline", max_items=300, ttl=3 * 3600):
         kind = ev.get("event")
         if kind == "cross-referenced":
@@ -43,9 +45,13 @@ def activity(gh: GitHub, repo: str, number: int, claim_window_days: int,
         elif kind == "commented":
             if ev.get("author_association") in MAINTAINER:
                 maintainer_comments += 1
+            discussion.append({"by": (ev.get("user") or ev.get("actor") or {}).get("login"),
+                               "role": ev.get("author_association"), "at": ev.get("created_at"),
+                               "body": (ev.get("body") or "")[:1500]})
             ts = parse_ts(ev.get("created_at"))
             if ts and ts >= cutoff and CLAIM.search(ev.get("body") or ""):
                 claims.append({"by": (ev.get("user") or ev.get("actor") or {}).get("login"),
                                "at": ev.get("created_at")})
+    # The nightly Claude step can't call the GitHub API, so it reads the discussion from here.
     return {"linked_open_prs": linked_open_prs, "recent_claims": claims,
-            "maintainer_comments": maintainer_comments}
+            "maintainer_comments": maintainer_comments, "discussion": discussion[-DISCUSSION_KEEP:]}
