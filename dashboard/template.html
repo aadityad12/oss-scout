@@ -1,0 +1,408 @@
+<title>OSS Scout</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
+<style>
+:root {
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --sunken: #eaefed;
+  --ink: #16201d;
+  --muted: #5b6964;
+  --line: #d9e1de;
+  --accent: #1e6b5a;
+  --accent-soft: #d8ebe5;
+  --open: #1a7f37;
+  --merged: #8250df;
+  --closed: #cf222e;
+  --wait: #b35900;
+  --wait-soft: #fff1e0;
+  --neutral: #6e7781;
+  --add-bg: #e6f4ea;
+  --add-ink: #13602b;
+  --del-bg: #fbe9eb;
+  --del-ink: #a0111f;
+  --shadow: 0 1px 2px rgba(22, 32, 29, .06), 0 4px 16px rgba(22, 32, 29, .05);
+  --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0e1412; --surface: #151d1a; --sunken: #1b2522; --ink: #e3ebe7; --muted: #93a39d;
+    --line: #27322e; --accent: #5fc3a8; --accent-soft: #1d3a32; --open: #3fb950; --merged: #a371f7;
+    --closed: #f85149; --wait: #f0a04b; --wait-soft: #3a2a14; --neutral: #8b949e;
+    --add-bg: #12301d; --add-ink: #7ee2a0; --del-bg: #3a1417; --del-ink: #ff9aa2;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1412; --surface: #151d1a; --sunken: #1b2522; --ink: #e3ebe7; --muted: #93a39d;
+  --line: #27322e; --accent: #5fc3a8; --accent-soft: #1d3a32; --open: #3fb950; --merged: #a371f7;
+  --closed: #f85149; --wait: #f0a04b; --wait-soft: #3a2a14; --neutral: #8b949e;
+  --add-bg: #12301d; --add-ink: #7ee2a0; --del-bg: #3a1417; --del-ink: #ff9aa2;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body);
+  padding-inline: 16px; padding-block: 20px 48px;
+}
+.wrap { max-width: 920px; margin: 0 auto; display: grid; gap: 20px; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -.01em; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+.muted { color: var(--muted); }
+
+/* header */
+.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.top h1 { font-size: 26px; font-weight: 800; }
+.top h1 span { font-family: var(--mono); font-weight: 400; font-size: 14px; color: var(--muted); margin-left: 8px; }
+.top .run { font-size: 13px; color: var(--muted); }
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.stat b { font: 700 24px/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--muted); letter-spacing: .02em; }
+.stat.alert { border-color: var(--wait); background: var(--wait-soft); }
+.stat.alert b { color: var(--wait); }
+@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* tabs */
+nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+nav.tabs button {
+  appearance: none; border: 0; background: none; color: var(--muted); font: 500 14px var(--body);
+  padding: 10px 12px; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap;
+}
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+nav.tabs button .n { font-family: var(--mono); font-size: 12px; margin-left: 4px; color: var(--muted); }
+section.panel { display: grid; gap: 16px; }
+.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-family: var(--body); font-weight: 600; }
+
+/* pills */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; line-height: 1; padding: 5px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); white-space: nowrap; }
+.chip.accent { background: var(--accent-soft); color: var(--accent); }
+.chip.guide { background: var(--wait-soft); color: var(--wait); font-weight: 600; }
+.guide-note { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--wait-soft); color: var(--ink); font-size: 14px; }
+.status { font-size: 12px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 999px; color: #fff; white-space: nowrap; }
+.s-suggested { background: var(--neutral); }
+.s-claimed { background: var(--accent); }
+.s-pr_open, .s-open { background: var(--open); }
+.s-waiting_on_you { background: var(--wait); }
+.s-merged { background: var(--merged); }
+.s-closed { background: var(--closed); }
+.s-skipped, .s-taken { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+
+/* pick card */
+.pick { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.pick-head { padding: 16px 18px 12px; display: grid; gap: 8px; }
+.pick-key { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
+.pick-key a { font-family: var(--mono); font-size: 13px; text-decoration: none; }
+.pick h3 { font-size: 19px; line-height: 1.3; }
+.pick .summary { max-width: 68ch; }
+.pick .summary p:last-child { margin-bottom: 0; }
+.pick .confidence { font-size: 13px; color: var(--muted); }
+.pick details { border-top: 1px solid var(--line); }
+.pick summary { padding: 11px 18px; cursor: pointer; font-weight: 600; font-size: 14px; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+.pick summary::-webkit-details-marker { display: none; }
+.pick summary::after { content: "+"; font-family: var(--mono); color: var(--muted); }
+.pick details[open] summary::after { content: "−"; }
+.pick .body { padding: 0 18px 16px; display: grid; gap: 10px; max-width: 100%; }
+.md { max-width: 70ch; }
+.md p, .md ul, .md ol { margin: 0 0 8px; }
+.md pre { background: var(--sunken); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+.md code { background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
+.md pre code { background: none; padding: 0; }
+.qa { display: grid; gap: 10px; }
+.qa div { border-left: 2px solid var(--line); padding-left: 12px; }
+.qa b { display: block; }
+
+.diff { font: 12.5px/1.5 var(--mono); background: var(--sunken); border-radius: 8px; overflow-x: auto; }
+.diff pre { margin: 0; padding: 8px 0; min-width: max-content; }
+.diff span { display: block; padding: 0 12px; white-space: pre; }
+.diff .add { background: var(--add-bg); color: var(--add-ink); }
+.diff .del { background: var(--del-bg); color: var(--del-ink); }
+.diff .hunk { color: var(--accent); }
+.diff .meta { color: var(--muted); font-weight: 500; }
+
+.copyable { position: relative; background: var(--sunken); border-radius: 8px; padding: 12px 14px; padding-right: 76px; white-space: pre-wrap; font-size: 14px; }
+.copy { position: absolute; top: 8px; right: 8px; appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 500 12px var(--body); padding: 5px 9px; border-radius: 6px; cursor: pointer; }
+ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+ol.steps code { background: var(--sunken); padding: 1px 5px; border-radius: 4px; word-break: break-word; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+
+/* lists */
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: center; }
+.row:first-child { border-top: 0; }
+.row .t { min-width: 0; }
+.row .t a { font-weight: 500; text-decoration: none; color: var(--ink); }
+.row .t a:hover { color: var(--accent); }
+.row .k { font-family: var(--mono); font-size: 12px; color: var(--muted); display: block; overflow-wrap: anywhere; }
+.row.waiting { background: var(--wait-soft); }
+.row .side { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.row button.link { appearance: none; border: 0; background: none; color: var(--accent); font: 500 13px var(--body); cursor: pointer; padding: 0; }
+
+.empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 12px; padding: 20px; display: grid; gap: 6px; }
+.empty h3 { font-size: 17px; }
+
+.home { background: var(--accent-soft); border-radius: 12px; padding: 16px 18px; display: grid; gap: 10px; }
+.home h3 { font-size: 17px; color: var(--accent); }
+.home ol { margin: 0; padding-left: 20px; }
+
+.table { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); white-space: nowrap; }
+thead th { border-top: 0; font-weight: 600; color: var(--muted); font-size: 12px; letter-spacing: .03em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; }
+.bar { display: inline-block; width: 60px; height: 6px; background: var(--sunken); border-radius: 3px; vertical-align: middle; margin-right: 8px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.policy-restrictive { color: var(--closed); font-weight: 600; }
+.policy-disclosure { color: var(--wait); font-weight: 600; }
+
+.ladder { display: grid; gap: 8px; }
+.ladder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.rungs { display: flex; gap: 3px; }
+.rungs i { width: 22px; height: 8px; border-radius: 2px; background: var(--sunken); }
+.rungs i.on { background: var(--accent); }
+.foot { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) { .pick { transition: box-shadow .15s; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>OSS Scout<span id="who"></span></h1>
+    <div class="run" id="run"></div>
+  </header>
+  <div class="stats" id="stats"></div>
+  <nav class="tabs" role="tablist" id="tabs"></nav>
+  <main id="main"></main>
+  <p class="foot">Status comes straight from GitHub each night. Nothing here is ever posted anywhere. You submit everything yourself.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script>
+const DATA = /*__SCOUT_DATA__*/null;
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const md = s => {
+  if (!s) return "";
+  if (window.marked && window.DOMPurify) return DOMPurify.sanitize(marked.parse(String(s)));
+  return `<p>${esc(s).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
+};
+const STATUS = {
+  suggested: "Suggested", claimed: "Claimed", pr_open: "PR open", waiting_on_you: "Waiting on you",
+  merged: "Merged", closed: "Closed", skipped: "Skipped", taken: "Taken by someone", open: "Open",
+};
+const status = s => `<span class="status s-${esc(s)}">${esc(STATUS[s] || s)}</span>`;
+const ago = iso => {
+  if (!iso) return "";
+  const d = (Date.now() - new Date(iso)) / 86400000;
+  if (d < 1 / 24) return "just now";
+  if (d < 1) return `${Math.round(d * 24)}h ago`;
+  if (d < 60) return `${Math.round(d)}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+};
+const days = x => x == null ? "–" : x < 1 ? `${Math.round(x * 24)}h` : `${x.toFixed(x < 10 ? 1 : 0)}d`;
+const hours = h => h == null ? "–" : h < 48 ? `${Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
+const pct = x => x == null ? "–" : `${Math.round(x * 100)}%`;
+
+function diffHtml(patch) {
+  if (!patch) return "";
+  const lines = patch.replace(/\n$/, "").split("\n").map(l => {
+    let c = "";
+    if (l.startsWith("+++") || l.startsWith("---") || l.startsWith("diff ") || l.startsWith("index ")) c = "meta";
+    else if (l.startsWith("@@")) c = "hunk";
+    else if (l.startsWith("+")) c = "add";
+    else if (l.startsWith("-")) c = "del";
+    return `<span class="${c}">${esc(l) || " "}</span>`;
+  }).join("");
+  return `<div class="diff"><pre>${lines}</pre></div>`;
+}
+
+function copyBlock(text, label = "Copy") {
+  return `<div class="copyable">${esc(text)}<button class="copy" type="button" data-copy="${esc(text)}">${label}</button></div>`;
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button.copy");
+  if (!b) return;
+  const text = b.dataset.copy;
+  const done = () => { const o = b.textContent; b.textContent = "Copied"; setTimeout(() => b.textContent = o, 1400); };
+  const fallback = () => {
+    const r = document.createRange(); r.selectNodeContents(b.parentElement);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = "Selected";
+  };
+  try { navigator.clipboard.writeText(text).then(done, fallback); } catch { fallback(); }
+});
+
+function pickCard(p, openFirst) {
+  const b = p.briefing || {};
+  const tests = b.tests || {};
+  const steps = (b.submit_steps || []).map(s => `<li>${esc(s).replace(/`([^`]+)`/g, "<code>$1</code>")}</li>`).join("");
+  const qa = (b.maintainer_qa || []).map(x => `<div><b>${esc(x.q)}</b>${md(x.a)}</div>`).join("");
+  const alts = (b.alternatives || []).map(a => `<li>${esc(a)}</li>`).join("");
+  const sec = (title, inner, open = false) => inner ? `<details${open ? " open" : ""}><summary>${title}</summary><div class="body">${inner}</div></details>` : "";
+  return `<article class="pick">
+    <div class="pick-head">
+      <div class="pick-key"><a href="${esc(p.url || b.url)}" target="_blank" rel="noopener">${esc(p.key)} ↗</a>${status(p.status || "suggested")}</div>
+      <h3>${esc(b.title || p.title)}</h3>
+      <div class="chips">
+        ${b.mode === "guide" ? `<span class="chip guide" title="This project doesn't accept AI-written code. The briefing explains; you write the fix.">You write the code</span>` : ""}
+        ${b.difficulty ? `<span class="chip accent">${esc(b.difficulty)}</span>` : ""}
+        ${b.time_estimate ? `<span class="chip">${esc(b.time_estimate)}</span>` : ""}
+        ${p.pr_url ? `<a class="chip" href="${esc(p.pr_url)}" target="_blank" rel="noopener">your PR ↗</a>` : ""}
+        ${p.suggested_at ? `<span class="chip">suggested ${esc(ago(p.suggested_at))}</span>` : ""}
+      </div>
+      ${b.summary ? `<div class="summary md">${md(b.summary)}</div>` : ""}
+      ${b.confidence ? `<div class="confidence">Confidence: ${esc(b.confidence)}</div>` : ""}
+    </div>
+    ${sec("Why this one", md(b.why), openFirst)}
+    ${sec("How this part of the code works", `<div class="md">${md(b.walkthrough)}</div>`)}
+    ${sec(b.mode === "guide" ? "What the fix needs to do" : "The draft change", `${b.mode === "guide" ? `<p class="guide-note">This project doesn't accept pull requests written by AI, so there's no draft patch. Use this to understand the problem, then write the fix yourself.</p>` : ""}<div class="md">${md(b.change_explained)}</div>${diffHtml(p.patch)}${alts ? `<div><b>Approaches to avoid</b><ul>${alts}</ul></div>` : ""}`)}
+    ${sec("Questions a reviewer may ask", qa ? `<div class="qa">${qa}</div>` : "")}
+    ${sec("Testing", `<dl class="kv"><dt>Ran</dt><dd>${tests.ran ? "Yes" : "No"}</dd>${tests.command ? `<dt>Command</dt><dd><code>${esc(tests.command)}</code></dd>` : ""}${tests.result ? `<dt>Result</dt><dd>${esc(tests.result)}</dd>` : ""}${tests.not_verified ? `<dt>Still to check</dt><dd>${esc(tests.not_verified)}</dd>` : ""}</dl>`)}
+    ${sec("Before you start", `${b.claim_comment ? `<div><b>Comment to post on the issue</b> <span class="muted">(edit it into your own words)</span></div>${copyBlock(b.claim_comment)}` : ""}${b.ai_disclosure ? `<div><b>AI policy</b></div><div class="md">${md(b.ai_disclosure)}</div>` : ""}${b.risks ? `<div><b>Risks</b></div><div class="md">${md(b.risks)}</div>` : ""}`)}
+    ${sec("How to submit", steps ? `<ol class="steps">${steps}</ol>` : "")}
+  </article>`;
+}
+
+function row(r, { waiting = false, action = "" } = {}) {
+  return `<div class="row${waiting ? " waiting" : ""}">
+    <div class="t"><span class="k">${esc(r.key || `${r.repo}#${r.number}`)}</span><a href="${esc(r.pr_url || r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div>
+    <div class="side">${action}${status(r.status)}</div>
+  </div>`;
+}
+
+function renderToday() {
+  const t = DATA.today;
+  let html = "";
+  if (t.picks.length) {
+    html += `<div class="section-title">Tonight's picks${t.date ? ` · ${esc(t.date)}` : ""}</div>`;
+    html += t.picks.map((p, i) => pickCard(p, i === 0)).join("");
+  } else {
+    html += `<div class="empty"><h3>No picks tonight</h3><p class="muted">${esc(t.note || "Nothing cleared the bar. That's a normal night: spend today on an open PR, a review, or your own project.")}</p></div>`;
+  }
+  if (t.note && t.picks.length) html += `<p class="muted">${esc(t.note)}</p>`;
+  if (DATA.open_suggestions.length) {
+    html += `<div class="section-title">Earlier suggestions, still unclaimed</div>`;
+    html += DATA.open_suggestions.map(p => pickCard(p, false)).join("");
+  }
+  if (t.considered.length) {
+    html += `<div class="section-title">Also looked at</div><div class="list">${t.considered.map(c =>
+      `<div class="row"><div class="t"><span class="k">${esc(c.key)}</span>${esc(c.reason)}</div><div class="side"><span class="chip">${esc(c.decision || "skipped")}</span></div></div>`).join("")}</div>`;
+  }
+  return html;
+}
+
+function openPrs() {
+  const linked = new Set(DATA.in_progress.map(s => s.pr_url).filter(Boolean));
+  return (DATA.contributions.prs || []).filter(p => p.status === "open" && !linked.has(p.url))
+    .map(p => ({ ...p, status: p.waiting_on_you ? "waiting_on_you" : "open" }));
+}
+
+function renderProgress() {
+  const items = [...DATA.in_progress, ...openPrs()]
+    .sort((a, b) => (b.status === "waiting_on_you") - (a.status === "waiting_on_you"));
+  if (!items.length) return `<div class="empty"><h3>Nothing in progress</h3><p class="muted">Claim one of today's picks by posting its comment on the issue, and it will show up here after the next scan.</p></div>`;
+  const waiting = items.filter(i => i.status === "waiting_on_you").length;
+  return `${waiting ? `<p><b>${waiting} ${waiting === 1 ? "thread is" : "threads are"} waiting on your reply.</b> <span class="muted">Answer these first; a quick reply keeps maintainers interested.</span></p>` : ""}
+    <div class="list">${items.map(i => row(i, { waiting: i.status === "waiting_on_you" })).join("")}</div>`;
+}
+
+const RUNGS = ["Getting started", "Contributor", "Regular contributor", "Trusted contributor", "Maintainer"];
+function renderHistory() {
+  const c = DATA.contributions;
+  const per = Object.entries(c.per_repo || {}).sort((a, b) => b[1].merged - a[1].merged || b[1].open - a[1].open);
+  let html = `<div class="section-title">Where you stand, per project</div>`;
+  html += per.length ? `<div class="list"><div class="ladder" style="padding:14px 16px">${per.map(([repo, r]) => {
+    const lvl = RUNGS.indexOf(r.ladder);
+    return `<div class="ladder-row"><div><span class="mono">${esc(repo)}</span><div class="muted" style="font-size:13px">${esc(r.ladder)} · ${r.merged} merged · ${r.open} open${r.closed ? ` · ${r.closed} closed` : ""}</div></div>
+      <div class="rungs" title="${esc(r.ladder)}">${RUNGS.slice(1).map((_, i) => `<i class="${i < lvl ? "on" : ""}"></i>`).join("")}</div></div>`;
+  }).join("")}</div></div>` : `<div class="empty"><p class="muted">No pull requests to other projects yet.</p></div>`;
+
+  const prs = [...(c.prs || [])].sort((a, b) => (b.merged_at || b.updated_at).localeCompare(a.merged_at || a.updated_at));
+  if (prs.length) html += `<div class="section-title">Your pull requests</div><div class="list">${prs.map(p => row({ ...p, status: p.status === "open" && p.waiting_on_you ? "waiting_on_you" : p.status }, { action: `<span class="chip">${esc(ago(p.merged_at || p.updated_at))}</span>` })).join("")}</div>`;
+
+  const rv = c.reviews || [], is = c.issues || [];
+  html += `<div class="section-title">Reviews and issues</div><div class="list">
+    <div class="row"><div class="t">Pull requests you reviewed on other projects</div><div class="side"><b class="mono">${rv.length}</b></div></div>
+    <div class="row"><div class="t">Issues you opened on other projects</div><div class="side"><b class="mono">${is.length}</b></div></div></div>`;
+
+  const team = c.team_prs || [];
+  if (team.length) html += `<p class="muted" style="font-size:13px">${team.length} pull request${team.length === 1 ? "" : "s"} to repos where you're a collaborator (team and hackathon projects) are left out of these numbers.</p>`;
+
+  const done = DATA.finished_suggestions;
+  if (done.length) html += `<div class="section-title">Past suggestions</div><div class="list">${done.map(s => row(s)).join("")}</div>`;
+  return html;
+}
+
+function renderProjects() {
+  const h = DATA.home;
+  let html = `<div class="home"><h3>${h.chosen.length ? "Your home projects" : h.provisional ? "Home projects: still exploring" : "Suggested home projects"}</h3>`;
+  if (h.chosen.length) html += `<ol>${h.chosen.map(r => `<li class="mono">${esc(r)}</li>`).join("")}</ol>`;
+  else if (h.top.length) html += `<p>${h.provisional ? `Going wide until <b>${esc(h.until)}</b>. Leading so far:` : "Based on what got merged and how each project treats outside contributors:"}</p><ol>${h.top.map(r => `<li><span class="mono">${esc(r.repo)}</span> <span class="muted">(${r.merged} merged, ${r.open} open)</span></li>`).join("")}</ol>`;
+  else html += `<p>Going wide until <b>${esc(h.until)}</b>. Once you have a few PRs in, the projects that respond best to you will show up here.</p>`;
+  html += `</div>`;
+
+  html += `<div class="section-title">How each project treats outside contributors</div>
+  <div class="table"><table><thead><tr><th>Project</th><th>Friendliness</th><th class="num">Merged</th><th class="num">Time to merge</th><th class="num">First reply</th><th>AI policy</th><th>CLA</th></tr></thead><tbody>
+  ${DATA.repos.map(r => `<tr>
+    <td><a href="https://github.com/${esc(r.repo)}" target="_blank" rel="noopener" class="mono">${esc(r.repo)}</a><div class="muted" style="font-size:12px">${esc(r.tier)}${r.language ? ` · ${esc(r.language)}` : ""}</div></td>
+    <td><span class="bar"><i style="width:${Math.round(r.friendliness * 100)}%"></i></span><span class="mono">${Math.round(r.friendliness * 100)}</span>${r.confident ? "" : ` <span class="muted" title="Fewer than 5 outside PRs to measure">?</span>`}</td>
+    <td class="num">${r.merges_elsewhere ? `<span class="muted" title="Outside PRs are closed on GitHub and landed through an internal mirror, so merges can't be counted here">elsewhere</span>` : pct(r.merge_rate)}</td>
+    <td class="num">${r.merges_elsewhere ? "–" : days(r.median_days_to_merge)}</td>
+    <td class="num">${hours(r.median_hours_to_first_response)}</td>
+    <td class="policy-${esc(r.ai_policy)}" title="${esc(r.ai_policy_evidence)}">${esc({ restrictive: "Restrictive", disclosure: "Disclose", mentioned: "Mentioned", none: "–" }[r.ai_policy] || r.ai_policy)}</td>
+    <td>${r.cla ? "Yes" : "–"}</td></tr>`).join("")}
+  </tbody></table></div>
+  <p class="muted" style="font-size:13px">Measured from each project's last 300 closed pull requests by occasional outside contributors: PRs from forks by people with fewer than 3 recent PRs. Staff usually push branches to the project itself, so they're left out. "First reply" is the median time until a maintainer or regular responded. Hover an AI policy to see the text it came from.</p>`;
+  return html;
+}
+
+const TABS = [
+  { id: "today", label: "Today", n: () => DATA.today.picks.length, render: renderToday },
+  { id: "progress", label: "In progress", n: () => DATA.in_progress.length + openPrs().length, render: renderProgress },
+  { id: "history", label: "History", render: renderHistory },
+  { id: "projects", label: "Projects", n: () => DATA.repos.length, render: renderProjects },
+];
+
+function show(id) {
+  const tab = TABS.find(t => t.id === id) || TABS[0];
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.id === tab.id));
+  $("#main").innerHTML = `<section class="panel" role="tabpanel">${tab.render()}</section>`;
+  try { localStorage.setItem("scout-tab", tab.id); } catch {}
+}
+
+function boot() {
+  if (!DATA) { $("#main").innerHTML = `<div class="empty"><h3>No data yet</h3><p class="muted">Run <code>python -m scout render</code> after a scan.</p></div>`; return; }
+  $("#who").textContent = "@" + DATA.login;
+  const lr = DATA.last_run || {};
+  $("#run").textContent = `Last scan ${ago(lr.at || DATA.generated_at)}${lr.eligible != null ? ` · ${lr.eligible} open issues checked` : ""}`;
+
+  const c = DATA.contributions, prs = c.prs || [];
+  const waiting = DATA.in_progress.filter(s => s.status === "waiting_on_you").length + openPrs().filter(p => p.status === "waiting_on_you").length;
+  $("#stats").innerHTML = [
+    [waiting, "waiting on you", waiting > 0],
+    [prs.filter(p => p.status === "open").length, "open pull requests"],
+    [prs.filter(p => p.status === "merged").length, "merged pull requests"],
+    [(c.reviews || []).length, "reviews given"],
+  ].map(([n, l, alert]) => `<div class="stat${alert ? " alert" : ""}"><b>${n}</b><span>${l}</span></div>`).join("");
+
+  $("#tabs").innerHTML = TABS.map(t => `<button role="tab" type="button" data-id="${t.id}">${t.label}${t.n ? `<span class="n">${t.n()}</span>` : ""}</button>`).join("");
+  $("#tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) show(b.dataset.id); });
+  let start = location.hash.slice(1);
+  if (!start) { try { start = localStorage.getItem("scout-tab"); } catch {} }
+  show(start || "today");
+}
+boot();
+</script>
