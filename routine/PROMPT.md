@@ -101,7 +101,8 @@ public; you clone it read-only into `/tmp/oss-scout`. **Never push to it.**
 5. Write `$DATA/picks/<YYYY-MM-DD>.json`:
    `{"date": "...", "picked": ["owner/repo#1"], "considered": [{"key": "...", "decision": "skipped", "reason": "..."}], "note": "one-line summary of the night"}`
 6. `cd /tmp/oss-scout && SCOUT_DATA_DIR=$DATA python3 -m scout ingest && SCOUT_DATA_DIR=$DATA python3 -m scout render`
-7. `cd $DATA && git add -A && git commit -m "scout: <date>" && git push origin claude/scout-data`
+7. Commit as the tool, not as yourself, and never add co-author or session trailers:
+   `cd $DATA && git add -A && git -c user.name="OSS Scout" -c user.email="oss-scout@users.noreply.github.com" commit -m "scout: <date>" && git push origin claude/scout-data`
 8. Republish the dashboard: publish `$DATA/dashboard.html` to the existing private
    artifact at **https://claude.ai/artifact/FzPX95McyyaEA6a75pcZoa** (page only, no extra files).
 9. Finish with a 3-line summary: picks, anything that went wrong, anything suspicious you ignored.
