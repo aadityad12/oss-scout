@@ -51,6 +51,22 @@ flowchart LR
    `suggested → claimed → pr_open → waiting_on_you → merged`. Nothing is
    self-reported.
 
+## Where it runs
+
+Two scheduled jobs, neither of which needs a laptop:
+
+- **GitHub Actions** (`.github/workflows/nightly.yml`, about 2:37am Pacific) runs the
+  scanner and tracker, saves the results to a private data repo, and publishes the
+  public page at **[scout.aadityad.dev](https://scout.aadityad.dev)**.
+- **A Claude Code routine** (about 3:37am Pacific) reads those results, picks what's
+  worth doing, prepares briefings, and refreshes a private dashboard. It never calls
+  the GitHub API, which cloud sessions can't reach beyond their own repo; cloning
+  public repos is enough.
+
+The public page shows only finished, public facts: contributions to other projects,
+the per-project research, and briefings for work that's already merged or closed.
+Briefings for projects that don't accept AI-assisted work are never published.
+
 ## Guardrails
 
 The routine runs unattended with the owner's GitHub identity and reads text written
