@@ -1,20 +1,23 @@
 """oss-scout command line.
 
-  python -m scout run        scan, score, filter, track -> data/candidates.json
-  python -m scout track      only refresh your contribution history
-  python -m scout ingest     record briefings written by the Claude step as suggestions
-  python -m scout render     build data/dashboard.html
-  python -m scout doctor     check GitHub access
-  python -m scout init-data  write the guard hook, settings and CLAUDE.md into the data dir
+  python -m scout run            scan, score, filter, track -> data/candidates.json
+  python -m scout track          only refresh your contribution history
+  python -m scout ingest         record briefings written by the Claude step as suggestions
+  python -m scout render         build data/dashboard.html
+  python -m scout render-public  build the public portfolio page
+  python -m scout doctor         check GitHub access
+  python -m scout init-data      write the guard hook, settings and CLAUDE.md into the data dir
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import config, discover, filters, rank, score, state as statemod, track
 from .github import GitHub, RateLimited
@@ -107,8 +110,10 @@ def cmd_run(args, cfg, data, gh) -> None:
                        "seconds": round(time.time() - started)})
     statemod.save(data, st)
     log(f"{len(final)} candidates -> {data / 'candidates.json'} ({gh.calls} API calls)")
-    for c in final:
-        log(f"  {c['score']:5.1f}  {c['key']}  {c['title'][:70]}")
+    # Actions logs of a public repo are public: don't reveal which issues are being considered.
+    if not os.environ.get("GITHUB_ACTIONS"):
+        for c in final:
+            log(f"  {c['score']:5.1f}  {c['key']}  {c['title'][:70]}")
 
 
 def cmd_track(args, cfg, data, gh) -> None:
@@ -134,6 +139,14 @@ def cmd_render(args, cfg, data, gh) -> None:
     log(f"dashboard -> {out}")
 
 
+def cmd_render_public(args, cfg, data, gh) -> None:
+    from . import public
+    st = statemod.load(data)
+    out_dir = Path(args.out) if args.out else data / "site"
+    out = public.render(cfg, data, st, out_dir, args.domain)
+    log(f"public site -> {out}")
+
+
 def cmd_init_data(args, cfg, data, gh) -> None:
     from .datarepo import init
     for f in init(data, cfg.login):
@@ -156,13 +169,16 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--no-discovery", action="store_true")
     for name in ("track", "ingest", "render", "doctor", "init-data"):
         sub.add_parser(name)
+    rp = sub.add_parser("render-public")
+    rp.add_argument("--out", default=None, help="output dir (default: <data_dir>/site)")
+    rp.add_argument("--domain", default=None, help="custom domain, written as CNAME")
     args = p.parse_args(argv)
 
     cfg = config.load()
     data = config.data_dir()
     gh = GitHub(cache_dir=data / ".cache")
     {"run": cmd_run, "track": cmd_track, "ingest": cmd_ingest,
-     "render": cmd_render, "doctor": cmd_doctor,
+     "render": cmd_render, "render-public": cmd_render_public, "doctor": cmd_doctor,
      "init-data": cmd_init_data}[args.cmd](args, cfg, data, gh)
 
 

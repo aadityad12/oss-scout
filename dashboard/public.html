@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Source · Aaditya Desai</title>
+<meta name="description" content="Open source contributions from Aaditya Desai, tracked automatically from GitHub: merged pull requests, reviews given, and per-project research.">
+<meta property="og:title" content="Open Source · Aaditya Desai">
+<meta property="og:description" content="Open source contributions from Aaditya Desai, tracked automatically from GitHub: merged pull requests, reviews given, and per-project research.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
+<style>
+:root {
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --sunken: #eaefed;
+  --ink: #16201d;
+  --muted: #5b6964;
+  --line: #d9e1de;
+  --accent: #1e6b5a;
+  --accent-soft: #d8ebe5;
+  --open: #1a7f37;
+  --merged: #8250df;
+  --closed: #cf222e;
+  --wait: #b35900;
+  --wait-soft: #fff1e0;
+  --neutral: #6e7781;
+  --add-bg: #e6f4ea;
+  --add-ink: #13602b;
+  --del-bg: #fbe9eb;
+  --del-ink: #a0111f;
+  --shadow: 0 1px 2px rgba(22, 32, 29, .06), 0 4px 16px rgba(22, 32, 29, .05);
+  --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0e1412; --surface: #151d1a; --sunken: #1b2522; --ink: #e3ebe7; --muted: #93a39d;
+    --line: #27322e; --accent: #5fc3a8; --accent-soft: #1d3a32; --open: #3fb950; --merged: #a371f7;
+    --closed: #f85149; --wait: #f0a04b; --wait-soft: #3a2a14; --neutral: #8b949e;
+    --add-bg: #12301d; --add-ink: #7ee2a0; --del-bg: #3a1417; --del-ink: #ff9aa2;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1412; --surface: #151d1a; --sunken: #1b2522; --ink: #e3ebe7; --muted: #93a39d;
+  --line: #27322e; --accent: #5fc3a8; --accent-soft: #1d3a32; --open: #3fb950; --merged: #a371f7;
+  --closed: #f85149; --wait: #f0a04b; --wait-soft: #3a2a14; --neutral: #8b949e;
+  --add-bg: #12301d; --add-ink: #7ee2a0; --del-bg: #3a1417; --del-ink: #ff9aa2;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+}
+
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+body {
+  background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body);
+  padding-inline: 16px; padding-block: 20px 48px; margin: 0;
+}
+.wrap { max-width: 920px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+.wrap > * { min-width: 0; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -.01em; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+.muted { color: var(--muted); }
+section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+section > * { min-width: 0; }
+.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-family: var(--body); font-weight: 600; }
+
+/* header */
+.top { display: grid; gap: 8px; }
+.top h1 { font-size: 28px; font-weight: 800; }
+.top p.sub { margin: 0; color: var(--muted); }
+.top .links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14px; }
+.top .updated { font-size: 13px; color: var(--muted); }
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.stat b { font: 700 24px/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--muted); letter-spacing: .02em; }
+@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* pills + chips */
+.status { font-size: 12px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 999px; color: #fff; white-space: nowrap; }
+.s-open { background: var(--open); }
+.s-merged { background: var(--merged); }
+.s-closed { background: var(--closed); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; line-height: 1; padding: 5px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); white-space: nowrap; }
+.chip.accent { background: var(--accent-soft); color: var(--accent); }
+
+/* lists */
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: center; }
+.row:first-child { border-top: 0; }
+.row .t { min-width: 0; }
+.row .t a { font-weight: 500; text-decoration: none; color: var(--ink); }
+.row .t a:hover { color: var(--accent); }
+.row .k { font-family: var(--mono); font-size: 12px; color: var(--muted); display: block; overflow-wrap: anywhere; }
+.row .side { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+
+.empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 12px; padding: 20px; display: grid; gap: 6px; }
+.empty h3 { font-size: 17px; }
+
+.ladder { display: grid; gap: 8px; padding: 14px 16px; }
+.ladder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.rungs { display: flex; gap: 3px; }
+.rungs i { width: 22px; height: 8px; border-radius: 2px; background: var(--sunken); display: block; }
+.rungs i.on { background: var(--accent); }
+
+/* finished work cards */
+.pick { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.pick-head { padding: 16px 18px 12px; display: grid; gap: 8px; }
+.pick-key { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
+.pick-key a { font-family: var(--mono); font-size: 13px; text-decoration: none; }
+.pick h3 { font-size: 19px; line-height: 1.3; }
+.pick details { border-top: 1px solid var(--line); }
+.pick summary { padding: 11px 18px; cursor: pointer; font-weight: 600; font-size: 14px; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+.pick summary::-webkit-details-marker { display: none; }
+.pick summary::after { content: "+"; font-family: var(--mono); color: var(--muted); }
+.pick details[open] summary::after { content: "\2212"; }
+.pick .body { padding: 0 18px 16px; display: grid; gap: 10px; max-width: 100%; }
+@media (prefers-reduced-motion: no-preference) { .pick { transition: box-shadow .15s; } }
+.md { max-width: 70ch; }
+.md p, .md ul, .md ol { margin: 0 0 8px; }
+.md pre { background: var(--sunken); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+.md code { background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
+.md pre code { background: none; padding: 0; }
+.qa { display: grid; gap: 10px; }
+.qa div { border-left: 2px solid var(--line); padding-left: 12px; }
+.qa b { display: block; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+.finished-note { margin: 0; max-width: 70ch; }
+
+/* research table */
+.table { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); white-space: nowrap; }
+thead th { border-top: 0; font-weight: 600; color: var(--muted); font-size: 12px; letter-spacing: .03em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; }
+.bar { display: inline-block; width: 60px; height: 6px; background: var(--sunken); border-radius: 3px; vertical-align: middle; margin-right: 8px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.policy-restrictive { color: var(--closed); font-weight: 600; }
+.policy-disclosure { color: var(--wait); font-weight: 600; }
+.research-note { font-size: 13px; max-width: 76ch; }
+
+.how p { max-width: 70ch; margin: 0 0 6px; }
+.foot { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Aaditya Desai</h1>
+    <p class="sub">Open source contributions, tracked straight from GitHub.</p>
+    <div class="links" id="links"></div>
+    <div class="updated" id="updated"></div>
+  </header>
+
+  <section aria-label="Stats">
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section aria-labelledby="projects-title">
+    <h2 class="section-title" id="projects-title">Projects</h2>
+    <div id="projects"></div>
+  </section>
+
+  <section aria-labelledby="prs-title" id="prs-section" hidden>
+    <h2 class="section-title" id="prs-title">Pull requests</h2>
+    <div id="prs"></div>
+  </section>
+
+  <section aria-labelledby="finished-title" id="finished-section" hidden>
+    <h2 class="section-title" id="finished-title">Finished work</h2>
+    <p class="muted finished-note">Notes I prepared before working on each issue. The code in each pull request is my own work, reviewed and submitted by me.</p>
+    <div id="finished"></div>
+  </section>
+
+  <section aria-labelledby="research-title">
+    <h2 class="section-title" id="research-title">How projects treat outside contributors</h2>
+    <div id="research"></div>
+    <p class="muted research-note">Measured from each project's last 300 closed pull requests by occasional outside contributors: PRs from forks by people with fewer than 3 recent PRs. Staff usually push branches to the project itself, so they're left out.</p>
+  </section>
+
+  <section aria-labelledby="how-title" class="how">
+    <h2 class="section-title" id="how-title">How this works</h2>
+    <p>A nightly job scans issues in the projects I follow and measures how each project treats outside contributors.</p>
+    <p>An AI-assisted step prepares study notes for promising issues.</p>
+    <p>I decide what to work on, and I write and submit every contribution myself.</p>
+    <p><a id="repo-link" href="#" target="_blank" rel="noopener">The tool that does this ↗</a></p>
+  </section>
+
+  <p class="foot" id="footer"></p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script>
+const DATA = /*__SCOUT_PUBLIC__*/null;
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const md = s => {
+  if (!s) return "";
+  if (window.marked && window.DOMPurify) return DOMPurify.sanitize(marked.parse(String(s)));
+  return `<p>${esc(s).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
+};
+const STATUS = { open: "Open", merged: "Merged", closed: "Closed" };
+const status = s => `<span class="status s-${esc(s)}">${esc(STATUS[s] || s)}</span>`;
+const ago = iso => {
+  if (!iso) return "";
+  const d = (Date.now() - new Date(iso)) / 86400000;
+  if (d < 1 / 24) return "just now";
+  if (d < 1) return `${Math.round(d * 24)}h ago`;
+  if (d < 60) return `${Math.round(d)}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+};
+const days = x => x == null ? "–" : x < 1 ? `${Math.round(x * 24)}h` : `${x.toFixed(x < 10 ? 1 : 0)}d`;
+const hours = h => h == null ? "–" : h < 48 ? `${Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
+const pct = x => x == null ? "–" : `${Math.round(x * 100)}%`;
+
+const RUNGS = ["Getting started", "Contributor", "Regular contributor", "Trusted contributor", "Maintainer"];
+
+function row(r) {
+  return `<div class="row">
+    <div class="t"><span class="k">${esc(r.repo)}#${esc(r.number)}</span><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div>
+    <div class="side"><span class="chip">${esc(ago(r.merged_at || r.updated_at))}</span>${status(r.status)}</div>
+  </div>`;
+}
+
+function renderProjects() {
+  const per = Object.entries(DATA.per_repo || {}).sort((a, b) => b[1].merged - a[1].merged || b[1].open - a[1].open);
+  if (!per.length) {
+    return `<div class="empty"><h3>Getting started</h3><p class="muted">First contributions are in progress. This page updates every night.</p></div>`;
+  }
+  return `<div class="list"><div class="ladder">${per.map(([repo, r]) => {
+    const lvl = RUNGS.indexOf(r.ladder);
+    return `<div class="ladder-row"><div><span class="mono">${esc(repo)}</span><div class="muted" style="font-size:13px">${esc(r.ladder)} · ${r.merged} merged · ${r.open} open</div></div>
+      <div class="rungs" title="${esc(r.ladder)}">${RUNGS.slice(1).map((_, i) => `<i class="${i < lvl ? "on" : ""}"></i>`).join("")}</div></div>`;
+  }).join("")}</div></div>`;
+}
+
+function renderPrs() {
+  const prs = [...(DATA.prs || [])].sort((a, b) => (b.merged_at || b.updated_at || "").localeCompare(a.merged_at || a.updated_at || ""));
+  return `<div class="list">${prs.map(row).join("")}</div>`;
+}
+
+function finishedCard(f) {
+  const b = f.briefing || {};
+  const tests = b.tests || {};
+  const qa = (b.maintainer_qa || []).map(x => `<div><b>${esc(x.q)}</b>${md(x.a)}</div>`).join("");
+  const alts = (b.alternatives || []).map(a => `<li>${esc(a)}</li>`).join("");
+  const sec = (title, inner, open = false) => inner ? `<details${open ? " open" : ""}><summary>${title}</summary><div class="body">${inner}</div></details>` : "";
+  return `<article class="pick">
+    <div class="pick-head">
+      <div class="pick-key"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.repo)}#${esc(f.key ? f.key.split("#")[1] : "")} ↗</a>${status(f.status)}</div>
+      <h3>${esc(b.title || f.title)}</h3>
+      <div class="chips">
+        <a class="chip" href="${esc(f.pr_url)}" target="_blank" rel="noopener">the pull request ↗</a>
+        ${b.difficulty ? `<span class="chip accent">${esc(b.difficulty)}</span>` : ""}
+        <span class="chip accent">AI-assisted briefing</span>
+      </div>
+    </div>
+    ${sec("Summary", b.summary ? `<div class="md">${md(b.summary)}</div>` : "", true)}
+    ${sec("Why this issue", b.why ? `<div class="md">${md(b.why)}</div>` : "")}
+    ${sec("How the code works", b.walkthrough ? `<div class="md">${md(b.walkthrough)}</div>` : "")}
+    ${sec("The change", b.change_explained ? `<div class="md">${md(b.change_explained)}</div>${alts ? `<div><b>Other approaches considered</b><ul>${alts}</ul></div>` : ""}` : "")}
+    ${sec("Questions a reviewer might ask", qa ? `<div class="qa">${qa}</div>` : "")}
+    ${sec("Testing", `<dl class="kv"><dt>Ran</dt><dd>${tests.ran ? "Yes" : "No"}</dd>${tests.command ? `<dt>Command</dt><dd><code>${esc(tests.command)}</code></dd>` : ""}${tests.result ? `<dt>Result</dt><dd>${esc(tests.result)}</dd>` : ""}${tests.not_verified ? `<dt>Still to check</dt><dd>${esc(tests.not_verified)}</dd>` : ""}</dl>`)}
+  </article>`;
+}
+
+function renderFinished() {
+  return (DATA.finished || []).map(finishedCard).join("");
+}
+
+function renderResearch() {
+  const repos = DATA.research || [];
+  return `<div class="table"><table><thead><tr><th>Project</th><th>Friendliness</th><th class="num">Merged</th><th class="num">Time to merge</th><th class="num">First reply</th><th>AI policy</th><th>CLA</th></tr></thead><tbody>
+  ${repos.map(r => `<tr>
+    <td><a href="https://github.com/${esc(r.repo)}" target="_blank" rel="noopener" class="mono">${esc(r.repo)}</a><div class="muted" style="font-size:12px">${esc(r.tier)}${r.language ? ` · ${esc(r.language)}` : ""}</div></td>
+    <td><span class="bar"><i style="width:${Math.round((r.friendliness || 0) * 100)}%"></i></span><span class="mono">${Math.round((r.friendliness || 0) * 100)}</span>${r.confident ? "" : ` <span class="muted" title="Fewer than 5 outside PRs to measure">?</span>`}</td>
+    <td class="num">${r.merges_elsewhere ? `<span class="muted" title="Outside PRs are closed on GitHub and landed through an internal mirror, so merges can't be counted here">elsewhere</span>` : pct(r.merge_rate)}</td>
+    <td class="num">${r.merges_elsewhere ? "–" : days(r.median_days_to_merge)}</td>
+    <td class="num">${hours(r.median_hours_to_first_response)}</td>
+    <td class="policy-${esc(r.ai_policy)}">${esc({ restrictive: "Restrictive", disclosure: "Disclose", mentioned: "Mentioned", none: "–" }[r.ai_policy] || r.ai_policy || "–")}</td>
+    <td>${r.cla ? "Yes" : "–"}</td></tr>`).join("")}
+  </tbody></table></div>`;
+}
+
+function boot() {
+  if (!DATA) {
+    $(".wrap").innerHTML = `<div class="empty"><h3>Nothing published yet</h3><p class="muted">Check back soon — this page updates every night.</p></div>`;
+    return;
+  }
+  const login = DATA.login || "";
+  $("#links").innerHTML = [
+    [`https://github.com/${login}`, "GitHub"],
+    [`https://github.com/${login}/oss-scout`, "oss-scout"],
+    ["https://aadityad.dev", "aadityad.dev"],
+  ].map(([href, label]) => `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(label)}</a>`).join("");
+  $("#updated").textContent = `Updated ${ago(DATA.generated_at)}`;
+  $("#repo-link").href = `https://github.com/${esc(login)}/oss-scout`;
+
+  const prs = DATA.prs || [];
+  const merged = prs.filter(p => p.status === "merged").length;
+  const open = prs.filter(p => p.status === "open").length;
+  const reviews = (DATA.reviews || []).length;
+  const projects = Object.keys(DATA.per_repo || {}).length;
+  $("#stats").innerHTML = [
+    [merged, "merged pull requests"],
+    [open, "open pull requests"],
+    [reviews, "reviews given"],
+    [projects, "projects contributed to"],
+  ].map(([n, l]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join("");
+
+  $("#projects").innerHTML = renderProjects();
+
+  if (prs.length) {
+    $("#prs-section").hidden = false;
+    $("#prs").innerHTML = renderPrs();
+  }
+
+  if ((DATA.finished || []).length) {
+    $("#finished-section").hidden = false;
+    $("#finished").innerHTML = renderFinished();
+  }
+
+  $("#research").innerHTML = renderResearch();
+
+  $("#footer").textContent = `Generated ${new Date(DATA.generated_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.`;
+}
+boot();
+</script>
+</body>
+</html>
