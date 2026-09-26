@@ -1,0 +1,89 @@
+# What the scout looks at, in priority order.
+#
+# Tiers are a priority order, not a fence: open discovery (below) searches all
+# of GitHub too, just with a lower weight. Edit freely; the scout re-reads this
+# every run.
+
+[user]
+login = "aadityad12"
+# Languages you read comfortably. Anything else still shows up, ranked lower.
+strong_languages = ["C++", "C", "Python"]
+familiar_languages = ["Kotlin", "Java"]
+
+[settings]
+max_candidates = 10          # how many go to the Claude step each night
+max_picks = 3                # Claude drafts at most this many (0 is fine)
+max_per_repo_wide = 2        # candidates per repo while exploring widely
+max_per_repo = 4             # ...and after home projects are chosen
+repo_score_ttl_days = 7      # re-measure repo friendliness weekly
+remeasure_per_run = 4        # ...a few stale repos per night, so runs stay short
+issue_max_age_days = 365     # ignore issues older than this
+claim_window_days = 21       # "I'll take this" comments newer than this = claimed
+skip_after_days = 14         # untouched suggestions become "skipped"
+# "Let the data decide": go wide until this date, then recommend home projects.
+wide_phase_until = "2026-10-18"
+
+[discovery]
+enabled = true
+weight = 0.6                 # discovered repos rank below every tier
+languages = ["C++", "Python", "Kotlin", "C"]
+labels = ["good first issue", "help wanted", "bounty"]
+min_stars = 300
+updated_within_days = 60
+max_issues_per_query = 30
+max_repos = 20
+
+# Label groups. A repo's labels are matched case-insensitively against these
+# regexes, so "Good First Issue", "good-first-issue" and "E-easy" all count.
+[labels]
+beginner = ['good.?first', 'first.?timers?', 'beginner', '\beasy\b', 'starter', 'low.?hanging']
+help = ['help.?wanted', 'contributions?.?welcome', 'up.?for.?grabs', 'pr.?welcome', 'community']
+bounty = ['bounty', '💎', '\$\d+']
+confirmed_bug = ['^reproduced$', '^confirmed', 'bug.?confirmed', 'verified']
+
+[[tier]]
+name = "Systems / C++"
+weight = 1.0
+repos = [
+  "duckdb/duckdb",
+  "ClickHouse/ClickHouse",
+  "ggml-org/llama.cpp",
+  "modular/modular",
+  "redpanda-data/redpanda",
+  "scylladb/scylladb",
+  "tenstorrent/tt-metal",
+]
+
+[[tier]]
+name = "Python AI / ML"
+weight = 0.9
+repos = [
+  "huggingface/transformers",
+  "huggingface/diffusers",
+  "pydantic/pydantic",
+  "vllm-project/vllm",
+]
+
+[[tier]]
+name = "Python dev / data tools"
+weight = 0.85
+repos = [
+  "PostHog/posthog",
+  "getsentry/sentry",
+  "dagster-io/dagster",
+  "PrefectHQ/prefect",
+  "airbytehq/airbyte",
+  "marimo-team/marimo",
+]
+
+[[tier]]
+name = "Kotlin / Android"
+weight = 0.75
+repos = [
+  "JetBrains/compose-multiplatform",
+  "square/okhttp",
+]
+
+# Per-repo extra labels worth watching (on top of the label groups above).
+[repo_labels]
+"duckdb/duckdb" = ["reproduced"]
