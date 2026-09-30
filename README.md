@@ -98,6 +98,10 @@ python3 -m scout render        # build data/dashboard.html
 python3 -m scout init-data     # install guard + settings into the data dir
 ```
 
+To act on a suggestion, run `/contribute` in a Claude Code session in this repo. It
+loads the briefing, reuses one local clone per project, and prepares the commit and
+PR for you to approve and send under your own name.
+
 `SCOUT_DATA_DIR` points at the data directory (defaults to `./data`). Standard
 library only, Python 3.11+. It uses `gh api` when the GitHub CLI is available and
 falls back to `GH_TOKEN`. REST only, because the cloud GitHub proxy blocks most
