@@ -125,11 +125,12 @@ def cmd_track(args, cfg, data, gh) -> None:
 
 
 def cmd_ingest(args, cfg, data, gh) -> None:
-    from .briefings import ingest
+    from .briefings import ingest, record_passes
     st = statemod.load(data)
     added = ingest(data, st)
+    passed = record_passes(data, st)
     statemod.save(data, st)
-    log(f"ingested {added} new briefing(s)")
+    log(f"ingested {added} new briefing(s), remembered {passed} turned-down issue(s)")
 
 
 def cmd_render(args, cfg, data, gh) -> None:

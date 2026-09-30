@@ -6,7 +6,10 @@ name: nightly
 
 on:
   schedule:
-    - cron: "37 9 * * *"   # 2:37am Pacific during daylight time (1:37am in winter)
+    # GitHub starts scheduled runs hours late, so this is early on purpose. When the
+    # scan finishes, the Claude routine is started by this workflow's completion
+    # (a GitHub webhook trigger on the routine), not by a clock.
+    - cron: "17 4 * * *"   # 9:17pm Pacific during daylight time (8:17pm in winter)
   workflow_dispatch:
 
 permissions:

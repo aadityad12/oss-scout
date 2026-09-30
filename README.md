@@ -40,14 +40,16 @@ flowchart LR
    and CLA requirements. This becomes a 0–100 *friendliness* score.
 3. **Filter** anything already claimed: linked open PRs, recent "I'll take this"
    comments, assignees, blocking labels.
-4. **Rank** by friendliness, freshness, label fit, language fit, project tier and
+4. **Skip** issues already suggested, and for 60 days any the Claude step turned down
+   (claimed elsewhere, needs special hardware, needs a design decision).
+5. **Rank** by friendliness, freshness, label fit, language fit, project tier and
    your own history with the project.
-5. **Brief.** A scheduled Claude Code routine reads the top candidates, picks zero
+6. **Brief.** A scheduled Claude Code routine reads the top candidates, picks zero
    to three, reproduces and drafts a fix where it can, and writes a briefing: the
    issue in plain English, how that part of the codebase works, the change explained
    piece by piece, rejected alternatives, likely reviewer questions with answers,
    what was and wasn't tested, and the project's AI-disclosure expectations.
-6. **Track** what you actually did, straight from GitHub. Suggestions move through
+7. **Track** what you actually did, straight from GitHub. Suggestions move through
    `suggested → claimed → pr_open → waiting_on_you → merged`. Nothing is
    self-reported.
 
@@ -55,11 +57,14 @@ flowchart LR
 
 Two scheduled jobs, neither of which needs a laptop:
 
-- **GitHub Actions** (`.github/workflows/nightly.yml`, about 2:37am Pacific) runs the
-  scanner and tracker, saves the results to a private data repo, and publishes the
-  public page at **[scout.aadityad.dev](https://scout.aadityad.dev)**.
-- **A Claude Code routine** (about 3:37am Pacific) reads those results, picks what's
-  worth doing, prepares briefings, and refreshes a private dashboard. It never calls
+- **GitHub Actions** (`.github/workflows/nightly.yml`, scheduled for 9:17pm Pacific,
+  though GitHub often starts it hours late) runs the scanner and tracker, saves the
+  results to a private data repo, and publishes the public page at
+  **[scout.aadityad.dev](https://scout.aadityad.dev)**.
+- **A Claude Code routine** starts as soon as that workflow finishes, so it always
+  reads a fresh scan (a 7:37am Pacific run is the fallback and stops if the night's
+  work is already done). It reads those results, picks what's worth doing, prepares
+  briefings, and refreshes a private dashboard. It never calls
   the GitHub API, which cloud sessions can't reach beyond their own repo; cloning
   public repos is enough.
 

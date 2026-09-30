@@ -6,7 +6,8 @@ Layout, inside the data dir:
   briefings/<owner>__<repo>__<number>/draft.patch     (draft mode only)
   picks/<YYYY-MM-DD>.json                             what was considered and why
 
-`ingest` turns new briefings into tracked suggestions.
+`ingest` turns new briefings into tracked suggestions, and `record_passes`
+remembers the issues each night turned down so the scanner stops offering them.
 """
 
 from __future__ import annotations
@@ -76,4 +77,28 @@ def ingest(data: Path, state: dict) -> int:
             "history": [{"at": now, "from": None, "to": "suggested"}],
         }
         added += 1
+    return added
+
+
+def record_passes(data: Path, state: dict) -> int:
+    """Remember every issue a night considered and didn't pick, with its reason.
+
+    Reads all picks files, oldest first, so a later pass of the same issue
+    restarts its cooldown. Safe to run repeatedly.
+    """
+    passed = state.setdefault("passed", {})
+    added = 0
+    for f in sorted((data / "picks").glob("*.json")):
+        picks = json.loads(f.read_text())
+        at = f'{picks.get("date") or f.stem}T00:00:00+00:00'
+        for c in picks.get("considered", []):
+            key = c.get("key")
+            # "deferred" means worth another look soon, so only "skipped" is remembered
+            if not key or c.get("decision") != "skipped" or key in state["suggestions"]:
+                continue
+            if key not in passed:
+                added += 1
+            elif passed[key]["at"] >= at:
+                continue
+            passed[key] = {"at": at, "reason": c.get("reason", "")}
     return added

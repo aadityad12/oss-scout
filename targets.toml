@@ -20,6 +20,7 @@ remeasure_per_run = 4        # ...a few stale repos per night, so runs stay shor
 issue_max_age_days = 365     # ignore issues older than this
 claim_window_days = 21       # "I'll take this" comments newer than this = claimed
 skip_after_days = 14         # untouched suggestions become "skipped"
+pass_cooldown_days = 60      # issues the Claude step turned down stay out this long
 # "Let the data decide": go wide until this date, then recommend home projects.
 wide_phase_until = "2026-10-18"
 

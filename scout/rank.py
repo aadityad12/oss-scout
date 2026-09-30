@@ -65,6 +65,10 @@ def eligible(issue: dict, repo: dict, cfg: Config, state: dict,
     now = now or datetime.now(timezone.utc)
     if issue["key"] in state.get("suggestions", {}):
         return "already suggested"
+    if passed := state.get("passed", {}).get(issue["key"]):
+        cooldown = cfg.settings.get("pass_cooldown_days", 60)
+        if _days(parse_ts(passed["at"]), now) < cooldown:
+            return "turned down recently"
     if repo.get("archived"):
         return "repo archived"
     if issue.get("assignees"):
