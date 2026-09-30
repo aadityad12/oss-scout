@@ -94,6 +94,7 @@ python3 -m scout doctor        # check GitHub access
 python3 -m scout run           # scan -> data/candidates.json
 python3 -m scout track         # refresh contribution history only
 python3 -m scout ingest        # record new briefings as suggestions
+python3 -m scout digest        # write data/digest.json: what needs you today
 python3 -m scout render        # build data/dashboard.html
 python3 -m scout init-data     # install guard + settings into the data dir
 ```

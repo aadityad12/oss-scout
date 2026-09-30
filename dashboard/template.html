@@ -91,7 +91,8 @@ section.panel { display: grid; gap: 16px; }
 .guide-note { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--wait-soft); color: var(--ink); font-size: 14px; }
 .status { font-size: 12px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 999px; color: #fff; white-space: nowrap; }
 .s-suggested { background: var(--neutral); }
-.s-claimed { background: var(--accent); }
+.s-claimed, .s-ready, .s-approved, .s-submitting { background: var(--accent); }
+.s-posted { background: var(--merged); }
 .s-pr_open, .s-open { background: var(--open); }
 .s-waiting_on_you { background: var(--wait); }
 .s-merged { background: var(--merged); }
@@ -200,7 +201,7 @@ const md = s => {
   return `<p>${esc(s).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
 };
 const STATUS = {
-  suggested: "Suggested", claimed: "Claimed", pr_open: "PR open", waiting_on_you: "Waiting on you",
+  suggested: "Suggested", ready: "Ready", approved: "Approved", submitting: "Submitting", posted: "Posted", claimed: "Claimed", pr_open: "PR open", waiting_on_you: "Waiting on you",
   merged: "Merged", closed: "Closed", skipped: "Skipped", taken: "Taken by someone", open: "Open",
 };
 const status = s => `<span class="status s-${esc(s)}">${esc(STATUS[s] || s)}</span>`;

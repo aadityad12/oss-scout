@@ -9,7 +9,7 @@ from pathlib import Path
 from . import briefings
 from .config import ROOT, Config
 
-ACTIVE = ("claimed", "pr_open", "waiting_on_you")
+ACTIVE = ("ready", "approved", "submitting", "claimed", "pr_open", "waiting_on_you")
 
 
 def latest_picks(data: Path) -> dict:

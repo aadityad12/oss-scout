@@ -248,3 +248,107 @@ def test_update_suggestions_flow():
     assert s["o/r#4"]["status"] == "taken"
     assert s["o/r#1"]["history"][-1] == {"at": NOW.isoformat(timespec="seconds"),
                                          "from": "suggested", "to": "merged"}
+
+
+def test_pending_items_are_not_auto_skipped():
+    def item(n, status, **kw):
+        return {"repo": "o/r", "number": n, "status": status, "suggested_at": iso(30), **kw}
+    st = {"suggestions": {
+        "o/r#1": item(1, "ready"),
+        "o/r#2": item(2, "approved"),
+        "o/r#3": item(3, "submitting"),
+        "o/r#4": item(4, "ready", suggested_at=iso(2)),
+        "o/r#5": item(5, "ready", kind="triage"),
+    }}
+    gh = GitHub(transport=Fake({"repos/o/r/issues/1": {"state": "open"},
+                                "repos/o/r/issues/4": {"state": "open"},
+                                "repos/o/r/issues/5": {"state": "open"}}))
+    contrib = {"prs": [], "commented_issues": ["o/r#1", "o/r#2", "o/r#5"]}
+    track.update_suggestions(gh, st, contrib, skip_after_days=14, now=NOW)
+    s = st["suggestions"]
+    assert s["o/r#1"]["status"] == "skipped"  # stale and never approved
+    assert s["o/r#2"]["status"] == "approved"  # in flight, even though old
+    assert s["o/r#3"]["status"] == "submitting"
+    assert s["o/r#4"]["status"] == "ready"  # commenting yourself doesn't make it "claimed"
+    assert s["o/r#5"]["status"] == "posted"  # comment-only item, comment is up
+
+
+def test_ready_item_becomes_a_pr_then_follows_its_review():
+    st = {"suggestions": {"o/r#1": {"repo": "o/r", "number": 1, "status": "submitting",
+                                    "suggested_at": iso(3)}}}
+    pr = {"repo": "o/r", "title": "fix", "body": "Fixes #1", "status": "open",
+          "created_at": iso(1), "url": "u", "waiting_on_you": False}
+    gh = GitHub(transport=Fake({}))
+    track.update_suggestions(gh, st, {"prs": [pr], "commented_issues": []}, 14, now=NOW)
+    assert st["suggestions"]["o/r#1"]["status"] == "pr_open"
+    pr["waiting_on_you"] = True
+    track.update_suggestions(gh, st, {"prs": [pr], "commented_issues": []}, 14, now=NOW)
+    assert st["suggestions"]["o/r#1"]["status"] == "waiting_on_you"
+    pr.update(status="merged")
+    track.update_suggestions(gh, st, {"prs": [pr], "commented_issues": []}, 14, now=NOW)
+    assert st["suggestions"]["o/r#1"]["status"] == "merged"
+
+
+def test_comment_only_items_ignore_prs_that_mention_the_issue():
+    st = {"suggestions": {"o/r#1": {"repo": "o/r", "number": 1, "status": "ready", "kind": "repro",
+                                    "suggested_at": iso(1)}}}
+    pr = {"repo": "o/r", "title": "fix", "body": "Fixes #1", "status": "open",
+          "created_at": iso(1), "url": "u"}
+    gh = GitHub(transport=Fake({"repos/o/r/issues/1": {"state": "open"}}))
+    track.update_suggestions(gh, st, {"prs": [pr], "commented_issues": []}, 14, now=NOW)
+    assert st["suggestions"]["o/r#1"]["status"] == "ready"
+
+
+def test_review_comments_are_captured_for_prs_waiting_on_you():
+    def user(login, kind="User"):
+        return {"login": login, "type": kind}
+    routes = {
+        "search/issues": [{"repository_url": "https://api.github.com/repos/o/r", "number": 5,
+                           "title": "Fix", "html_url": "https://github.com/o/r/pull/5",
+                           "state": "open", "created_at": iso(5), "updated_at": iso(1),
+                           "author_association": "CONTRIBUTOR", "body": "Fixes #1",
+                           "pull_request": {"merged_at": None}}],
+        "repos/o/r/issues/5/comments": [
+            {"user": user("me"), "created_at": iso(4), "body": "old answer", "html_url": "c0"},
+            {"user": user("ci-bot", "Bot"), "created_at": iso(1), "body": "bot noise", "html_url": "cb"},
+            {"user": user("maint"), "created_at": iso(2), "body": "x" * 3000, "html_url": "c1"}],
+        "repos/o/r/pulls/5/reviews": [
+            {"user": user("maint"), "submitted_at": iso(4.5), "body": "already answered", "html_url": "r0",
+             "state": "COMMENTED"},
+            {"user": user("maint"), "submitted_at": iso(1.5), "body": "", "html_url": "r1",
+             "state": "CHANGES_REQUESTED"}],
+        "repos/o/r/pulls/5/comments": [
+            {"user": user("maint"), "created_at": iso(1), "body": "rename this", "html_url": "i1",
+             "path": "a.py", "line": 12}],
+        "repos/o/r/pulls/5/commits": [{"commit": {"committer": {"date": iso(3.5)}}}],
+    }
+    contrib = track.collect(GitHub(transport=Fake(routes), search_interval=0), "me")
+    pr = contrib["prs"][0]
+    assert pr["waiting_on_you"]
+    got = pr["review_comments"]
+    assert [c["url"] for c in got] == ["c1", "i1"]  # answered and bot and empty ones are left out
+    assert len(got[0]["body"]) == 2000
+    assert (got[1]["author"], got[1]["path"], got[1]["line"], got[1]["kind"]) == ("maint", "a.py", 12, "inline")
+
+
+def test_review_comments_capped_and_absent_when_not_waiting():
+    many = [{"user": {"login": "maint", "type": "User"}, "created_at": iso(3 - i / 100), "body": f"c{i}",
+             "html_url": f"u{i}"} for i in range(15)]
+    quiet = {f"repos/o/r/{p}": [] for p in ("pulls/5/reviews", "pulls/5/comments", "pulls/5/commits")}
+    gh = GitHub(transport=Fake({"repos/o/r/issues/5/comments": many, **quiet}))
+    waiting, comments = track.review_state(gh, "o/r", 5, "me")
+    assert waiting and [c["body"] for c in comments] == [f"c{i}" for i in range(5, 15)]
+    mine = [{"user": {"login": "me", "type": "User"}, "created_at": iso(0), "body": "done"}]
+    gh = GitHub(transport=Fake({"repos/o/r/issues/5/comments": many + mine, **quiet}))
+    assert track.review_state(gh, "o/r", 5, "me") == (False, [])
+
+
+def test_empty_approval_is_not_waiting_but_bare_change_request_is():
+    def review(state):
+        return [{"user": {"login": "maint", "type": "User"}, "submitted_at": iso(1), "body": "",
+                 "state": state, "html_url": "r1"}]
+    quiet = {f"repos/o/r/{p}": [] for p in ("issues/5/comments", "pulls/5/comments", "pulls/5/commits")}
+    gh = GitHub(transport=Fake({"repos/o/r/pulls/5/reviews": review("APPROVED"), **quiet}))
+    assert track.review_state(gh, "o/r", 5, "me") == (False, [])
+    gh = GitHub(transport=Fake({"repos/o/r/pulls/5/reviews": review("CHANGES_REQUESTED"), **quiet}))
+    assert track.review_state(gh, "o/r", 5, "me") == (True, [])

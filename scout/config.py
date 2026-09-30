@@ -26,6 +26,7 @@ class Config:
     discovery: dict
     label_groups: dict[str, list[re.Pattern]]
     tiers: list[Tier]
+    submit: dict = field(default_factory=dict)
     repo_labels: dict[str, list[str]] = field(default_factory=dict)
 
     def tier_of(self, repo: str) -> Tier | None:
@@ -52,6 +53,7 @@ def load(path: Path | None = None) -> Config:
         label_groups={k: [re.compile(p, re.I) for p in v]
                       for k, v in raw.get("labels", {}).items()},
         tiers=[Tier(t["name"], float(t["weight"]), t["repos"]) for t in raw.get("tier", [])],
+        submit=raw.get("submit", {}),
         repo_labels=raw.get("repo_labels", {}),
     )
 
