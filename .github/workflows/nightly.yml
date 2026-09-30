@@ -6,7 +6,9 @@ name: nightly
 
 on:
   schedule:
-    - cron: "37 9 * * *"   # 2:37am Pacific during daylight time (1:37am in winter)
+    # GitHub starts scheduled runs hours late, so this is early on purpose. When the
+    # scan saves its results, a step below starts the Claude routine.
+    - cron: "17 4 * * *"   # 9:17pm Pacific during daylight time (8:17pm in winter)
   workflow_dispatch:
 
 permissions:
@@ -61,6 +63,25 @@ jobs:
             git pull -q --rebase origin claude/scout-data
             git push -q origin HEAD:claude/scout-data
           fi
+
+      # Routines can't be triggered by a workflow finishing, so this calls the
+      # routine's API trigger. Skipped until both secrets are set; the routine's
+      # morning schedule still runs either way.
+      - name: Start the Claude routine
+        env:
+          ROUTINE_FIRE_URL: ${{ secrets.ROUTINE_FIRE_URL }}
+          ROUTINE_TOKEN: ${{ secrets.ROUTINE_TOKEN }}
+        run: |
+          if [ -z "$ROUTINE_FIRE_URL" ] || [ -z "$ROUTINE_TOKEN" ]; then
+            echo "Routine trigger not configured"
+            exit 0
+          fi
+          curl -sS --fail-with-body -o /dev/null -X POST "$ROUTINE_FIRE_URL" \
+            -H "Authorization: Bearer $ROUTINE_TOKEN" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "Content-Type: application/json" \
+            -d '{}'
 
       - name: Build public page
         env:

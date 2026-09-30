@@ -50,6 +50,24 @@ def test_ingest_adds_once(tmp_path):
     assert s["status"] == "suggested" and s["briefing"] == "briefings/o__r__7"
 
 
+def test_record_passes_keeps_latest_reason(tmp_path):
+    picks = tmp_path / "picks"
+    picks.mkdir()
+    (picks / "2026-09-26.json").write_text(json.dumps({"date": "2026-09-26", "picked": ["o/r#7"], "considered": [
+        {"key": "o/r#1", "decision": "skipped", "reason": "claimed"},
+        {"key": "o/r#2", "decision": "deferred", "reason": "good, but over budget tonight"},
+        {"key": "o/r#7", "decision": "skipped", "reason": "picked by a later run"}]}))
+    (picks / "2026-09-28.json").write_text(json.dumps({"date": "2026-09-28", "picked": [], "considered": [
+        {"key": "o/r#1", "decision": "skipped", "reason": "still claimed"}]}))
+    (picks / "2026-09-27.json").write_text(json.dumps({"date": "2026-09-27", "picked": [], "considered": [],
+                                                       "note": "Scan missing"}))
+    st = statemod.load(tmp_path)
+    st["suggestions"]["o/r#7"] = {}
+    assert briefings.record_passes(tmp_path, st) == 1
+    assert briefings.record_passes(tmp_path, st) == 0
+    assert st["passed"] == {"o/r#1": {"at": "2026-09-28T00:00:00+00:00", "reason": "still claimed"}}
+
+
 def test_render_embeds_data_safely(tmp_path):
     b = good_briefing()
     b["summary"] = "breaks on </script><script>alert(1)</script>"

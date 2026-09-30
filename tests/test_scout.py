@@ -165,6 +165,13 @@ def test_eligibility(cfg):
     assert rank.eligible(issue(repo="a/b", key="a/b#1"), {"stars": 10}, cfg, {}, now=NOW) == "too few stars"
 
 
+def test_turned_down_issues_cool_off(cfg):
+    def passed(days_ago):
+        return {"passed": {"duckdb/duckdb#1": {"at": iso(days_ago), "reason": "needs hardware"}}}
+    assert rank.eligible(issue(), {}, cfg, passed(5), now=NOW) == "turned down recently"
+    assert rank.eligible(issue(), {}, cfg, passed(61), now=NOW) is None
+
+
 def test_label_groups(cfg):
     from scout.discover import label_groups_for
     assert "beginner" in label_groups_for("Good First Issue", cfg)
