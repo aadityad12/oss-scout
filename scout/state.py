@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 EMPTY = {"version": 1, "repos": {}, "suggestions": {}, "contributions": {},
-         "passed": {},
+         "passed": {}, "actions": [],
          "home_projects": [], "runs": []}
 
 

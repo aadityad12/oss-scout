@@ -6,6 +6,7 @@
 
 [user]
 login = "aadityad12"
+name = "Aaditya Desai"   # the author name on commits made for you
 # Languages you read comfortably. Anything else still shows up, ranked lower.
 strong_languages = ["C++", "C", "Python"]
 familiar_languages = ["Kotlin", "Java"]

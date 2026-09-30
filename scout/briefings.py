@@ -51,7 +51,7 @@ PR_FIELDS = ("title", "body", "branch", "base")
 AI_MARKERS = ("co-authored-by", "generated with", "🤖")
 
 
-def _has_ai_marker(*texts) -> bool:
+def has_ai_marker(*texts) -> bool:
     return any(m in str(t).lower() for t in texts for m in AI_MARKERS)
 
 
@@ -83,7 +83,7 @@ def _ready_problems(b: dict, kind: str, folder: Path | None) -> list[str]:
     if b.get("ai_posts_forbidden"):
         problems.append("a ready item can't be AI-written when the project forbids AI-written posts")
     if kind == "pr":
-        pr = _read_json(folder / "pr.json") if folder else {}
+        pr = read_json(folder / "pr.json") if folder else {}
         if folder and not pr:
             problems.append("ready pr needs pr.json")
         problems += [f"pr.json needs {k}" for k in PR_FIELDS
@@ -96,7 +96,7 @@ def _ready_problems(b: dict, kind: str, folder: Path | None) -> list[str]:
             disclosure = pr.get("disclosure")
             if disclosure is not None and (not isinstance(disclosure, str) or disclosure not in str(pr.get("body"))):
                 problems.append("pr.json disclosure should be null or a sentence that appears in body")
-            if _has_ai_marker(pr.get("title"), pr.get("body"), pr.get("commit_message")):
+            if has_ai_marker(pr.get("title"), pr.get("body"), pr.get("commit_message")):
                 problems.append("pr.json contains an AI marker")
         if folder and not (folder / "draft.patch").exists():
             problems.append("ready pr needs draft.patch")
@@ -108,7 +108,7 @@ def _ready_problems(b: dict, kind: str, folder: Path | None) -> list[str]:
             post = folder / "post.md"
             if not post.exists() or not post.read_text().strip():
                 problems.append("ready item needs post.md")
-            elif _has_ai_marker(post.read_text()):
+            elif has_ai_marker(post.read_text()):
                 problems.append("post.md contains an AI marker")
     return problems
 
@@ -126,7 +126,7 @@ def validate_followup(fu: dict, folder: Path | None = None, briefing: dict | Non
     elif kind == "small":
         if not (isinstance(fu.get("reply"), str) and fu["reply"].strip()):
             problems.append("small follow-up needs reply")
-        elif _has_ai_marker(fu["reply"]):
+        elif has_ai_marker(fu["reply"]):
             problems.append("reply contains an AI marker")
         if briefing and briefing.get("ai_posts_forbidden"):
             problems.append("the project forbids AI-written posts: use discuss with talking_points")
@@ -144,7 +144,7 @@ def validate_followup(fu: dict, folder: Path | None = None, briefing: dict | Non
     return problems
 
 
-def _read_json(path: Path) -> dict:
+def read_json(path: Path) -> dict:
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -157,7 +157,7 @@ def latest_followup(folder: Path, briefing: dict) -> dict | None:
     dirs = sorted(d for d in (folder / "followups").glob("*") if d.is_dir())
     if not dirs:
         return None
-    fu = _read_json(dirs[-1] / "followup.json")
+    fu = read_json(dirs[-1] / "followup.json")
     problems = validate_followup(fu, dirs[-1], briefing) if fu else ["missing followup.json"]
     return {"dir": str(dirs[-1].relative_to(folder.parent.parent)), "kind": fu.get("kind"),
             "problems": problems}
@@ -173,7 +173,7 @@ def load_all(data: Path) -> list[dict]:
         # guide mode means the project doesn't accept AI-written code: never show a patch
         b["_patch"] = patch.read_text() if patch.exists() and b["mode"] == "draft" else ""
         b["_problems"] = validate(b, f.parent)
-        b["_pr"] = _read_json(f.parent / "pr.json") if b["mode"] == "draft" else {}
+        b["_pr"] = read_json(f.parent / "pr.json") if b["mode"] == "draft" else {}
         post = f.parent / "post.md"
         b["_post"] = post.read_text() if post.exists() else ""
         b["_followup"] = latest_followup(f.parent, b)

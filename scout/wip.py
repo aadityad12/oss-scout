@@ -6,10 +6,18 @@ been submitted yet. The result goes into candidates.json for the Claude step.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+from .score import parse_ts
 from .track import PENDING
 
 
-def compute(state: dict, settings: dict) -> dict:
+def snoozed(s: dict, now: datetime | None = None) -> bool:
+    until = parse_ts(s.get("snoozed_until"))
+    return bool(until and until > (now or datetime.now(timezone.utc)))
+
+
+def compute(state: dict, settings: dict, now: datetime | None = None) -> dict:
     max_ready = settings.get("max_ready", 1)
     max_open = settings.get("max_open_prs", 3)
     max_per_repo = settings.get("max_open_prs_per_repo", 1)
@@ -20,7 +28,7 @@ def compute(state: dict, settings: dict) -> dict:
         by_repo[p["repo"]] = by_repo.get(p["repo"], 0) + 1
     waiting = [{"repo": p["repo"], "number": p["number"], "url": p.get("url")}
                for p in open_prs if p.get("waiting_on_you")]
-    unsent = sorted(k for k, s in state.get("suggestions", {}).items() if s.get("status") in PENDING)
+    unsent = sorted(k for k, s in state.get("suggestions", {}).items() if s.get("status") in PENDING and not snoozed(s, now))
 
     reasons = []
     if max_ready < 1:

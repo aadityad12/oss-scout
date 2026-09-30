@@ -1,0 +1,6 @@
+{
+  "name": "oss-scout-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test/*.test.js" }
+}

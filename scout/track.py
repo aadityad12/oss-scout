@@ -155,8 +155,8 @@ def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_
                 pr["status"], "waiting_on_you" if pr.get("waiting_on_you") else "pr_open")
         elif old in PENDING and not pr_kind and key in commented:
             s["status"] = "posted"
-        elif old in ("approved", "submitting"):
-            pass  # in flight: only a PR or a posted comment moves it
+        elif old in ("approved", "submitting") or (old in ("pr_open", "waiting_on_you") and s.get("submitted_at")):
+            pass  # in flight (or just opened, not indexed yet): only a PR or a posted comment moves it
         elif key in commented and old != "ready":
             s["status"] = "claimed"
         else:

@@ -6,6 +6,7 @@
   python -m scout digest         write data/digest.json (what needs you today)
   python -m scout render         build data/dashboard.html
   python -m scout render-public  build the public portfolio page
+  python -m scout act            do what you tapped on the dashboard (runs in the data repo's act workflow)
   python -m scout doctor         check GitHub access
   python -m scout init-data      write the guard hook, settings and CLAUDE.md into the data dir
 """
@@ -162,6 +163,14 @@ def cmd_init_data(args, cfg, data, gh) -> None:
     from .datarepo import init
     for f in init(data, cfg.login):
         log(f"wrote {data / f}")
+    log("commit .github/workflows/act.yml to the data repo's default branch (main): "
+        "workflow_dispatch only finds workflows there. The data itself stays on claude/scout-data.")
+
+
+def cmd_act(args, cfg, data, gh) -> None:
+    from .act import run
+    body = Path(args.body_file).read_text() if args.body_file else None
+    sys.exit(run(cfg, data, args.key, args.action, args.title, body, args.dry_run))
 
 
 def cmd_doctor(args, cfg, data, gh) -> None:
@@ -180,6 +189,12 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--no-discovery", action="store_true")
     for name in ("track", "ingest", "digest", "render", "doctor", "init-data"):
         sub.add_parser(name)
+    ac = sub.add_parser("act")
+    ac.add_argument("--key", required=True, help="owner/repo#123")
+    ac.add_argument("--action", required=True, choices=["submit", "post", "followup", "approve", "later", "skip"])
+    ac.add_argument("--title", default=None, help="edited PR title (or commit message for a follow-up)")
+    ac.add_argument("--body-file", default=None, help="file with the edited PR body or comment")
+    ac.add_argument("--dry-run", action="store_true", help="run the checks and print the plan; write nothing")
     rp = sub.add_parser("render-public")
     rp.add_argument("--out", default=None, help="output dir (default: <data_dir>/site)")
     rp.add_argument("--domain", default=None, help="custom domain, written as CNAME")
@@ -190,7 +205,7 @@ def main(argv: list[str] | None = None) -> None:
     gh = GitHub(cache_dir=data / ".cache")
     {"run": cmd_run, "track": cmd_track, "ingest": cmd_ingest,
      "digest": cmd_digest, "render": cmd_render, "render-public": cmd_render_public, "doctor": cmd_doctor,
-     "init-data": cmd_init_data}[args.cmd](args, cfg, data, gh)
+     "init-data": cmd_init_data, "act": cmd_act}[args.cmd](args, cfg, data, gh)
 
 
 if __name__ == "__main__":

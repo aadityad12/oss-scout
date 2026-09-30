@@ -47,6 +47,138 @@ This repository's `.claude/hooks/guard.py` blocks every write to GitHub except
 don't look for a way around it: note it in your summary and move on.
 """
 
+ACT_YML = """name: act
+run-name: "act: ${{ inputs.action }} ${{ inputs.key }}"
+
+# Does what the owner tapped on the private dashboard: opens a PR, posts a comment,
+# pushes a review fix, or records Later / Skip. Started only by the dashboard's
+# Worker (workflow_dispatch). SUBMIT_TOKEN is a classic PAT (public_repo) kept only
+# as a secret of this repository; the nightly routine never sees it.
+# This file must live on the default branch (main) for workflow_dispatch to find it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      key:
+        description: "owner/repo#123"
+        required: true
+        type: string
+      action:
+        description: "What to do"
+        required: true
+        type: choice
+        options: [submit, post, followup, approve, later, skip]
+      title:
+        description: "Edited PR title (or commit message for a follow-up)"
+        required: false
+        default: ""
+        type: string
+      body_b64:
+        description: "Edited PR body or comment, base64"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Run the checks and print the plan only"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: act
+  cancel-in-progress: false
+
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the data
+        uses: actions/checkout@v4
+        with:
+          ref: claude/scout-data
+          path: data
+
+      - name: Check out the tool
+        uses: actions/checkout@v4
+        with:
+          repository: aadityad12/oss-scout
+          path: tool
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Act
+        id: act
+        continue-on-error: true
+        working-directory: tool
+        env:
+          KEY: ${{ inputs.key }}
+          ACTION: ${{ inputs.action }}
+          TITLE: ${{ inputs.title }}
+          BODY_B64: ${{ inputs.body_b64 }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SCOUT_DATA_DIR: ../data
+          GH_TOKEN: ${{ secrets.SUBMIT_TOKEN }}
+        run: |
+          set -eu
+          echo "$KEY" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$' || { echo "bad key" >&2; exit 2; }
+          set -- act --key "$KEY" --action "$ACTION"
+          if [ -n "$TITLE" ]; then set -- "$@" --title "$TITLE"; fi
+          if [ -n "$BODY_B64" ]; then
+            printf '%s' "$BODY_B64" | base64 -d > "$RUNNER_TEMP/body.md"
+            set -- "$@" --body-file "$RUNNER_TEMP/body.md"
+          fi
+          if [ "$DRY_RUN" = "true" ]; then set -- "$@" --dry-run; fi
+          python -m scout "$@"
+
+      - name: Refresh the dashboard and digest
+        if: ${{ !inputs.dry_run }}
+        working-directory: tool
+        env:
+          SCOUT_DATA_DIR: ../data
+        run: |
+          python -m scout digest
+          python -m scout render
+
+      - name: Save to the data repo
+        if: ${{ !inputs.dry_run }}
+        working-directory: data
+        env:
+          KEY: ${{ inputs.key }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -q -m "act: $ACTION $KEY"
+            saved=""
+            for attempt in 1 2 3; do
+              if git pull -q --rebase origin claude/scout-data && git push -q origin HEAD:claude/scout-data; then
+                saved=yes
+                break
+              fi
+              git rebase --abort 2>/dev/null || true
+              sleep $((attempt * 5))
+            done
+            if [ -z "$saved" ]; then
+              echo "::error::The GitHub action happened, but saving the new state to the data repo failed. Tap again: the next run finds the existing PR or comment and records it, without posting twice."
+              exit 1
+            fi
+          fi
+
+      - name: Fail the run if the action failed
+        if: ${{ steps.act.outcome == 'failure' }}
+        run: exit 1
+"""
+
 GITIGNORE = ".cache/\n*.tmp\n__pycache__/\n"
 
 # The nightly session runs on Sonnet. Opus is an escalation, used at most once per
@@ -114,6 +246,10 @@ def init(data: Path, login: str) -> list[str]:
     for name, text in (("root-cause-analyst", ANALYST), ("thread-summarizer", SUMMARIZER)):
         (agents / f"{name}.md").write_text(text)
         written.append(f".claude/agents/{name}.md")
+    wf = data / ".github" / "workflows"
+    wf.mkdir(parents=True, exist_ok=True)
+    (wf / "act.yml").write_text(ACT_YML)
+    written.append(".github/workflows/act.yml")
     gi = data / ".gitignore"
     if not gi.exists():
         gi.write_text(GITIGNORE)
