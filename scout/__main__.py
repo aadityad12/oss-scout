@@ -154,7 +154,7 @@ def cmd_render_public(args, cfg, data, gh) -> None:
     from . import public
     st = statemod.load(data)
     out_dir = Path(args.out) if args.out else data / "site"
-    out = public.render(cfg, data, st, out_dir, args.domain)
+    out = public.render(cfg, st, out_dir, args.domain)
     log(f"public site -> {out}")
 
 

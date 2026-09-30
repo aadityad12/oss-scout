@@ -86,7 +86,7 @@ jobs:
       - name: Build public page
         env:
           SCOUT_DATA_DIR: data
-        run: python -m scout render-public --out site --domain scout.aadityad.dev
+        run: python -m scout render-public --out site --domain oss.aadityad.dev
 
       - uses: actions/upload-pages-artifact@v3
         with:

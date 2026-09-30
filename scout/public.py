@@ -1,82 +1,119 @@
-"""The public portfolio page.
+"""The public page: the owner's own open source contributions, and nothing else.
 
-Shows finished, public facts only: contributions to other people's projects, the
-per-project research, and briefings for work that is already done. Anything in
-progress (today's picks, open suggestions, draft comments, candidates) stays on
-the private dashboard, and so does all AI prep for projects that don't accept
-AI-assisted work.
+Everything here comes from the GitHub-derived `contributions` and the stars and
+language of the projects in `repos`. Briefings, suggestions, candidates and any
+per-project research never reach the output.
 """
 
 from __future__ import annotations
 
+import html
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import briefings
 from .config import ROOT, Config
+from .score import parse_ts
 
-FINISHED = {"merged", "closed"}
-BRIEFING_FIELDS = ("summary", "why", "difficulty", "walkthrough", "change_explained",
-                   "alternatives", "maintainer_qa", "tests")
-PR_FIELDS = ("repo", "number", "title", "url", "status", "created_at", "updated_at", "merged_at")
-REPO_FIELDS = ("repo", "tier", "language", "stars", "friendliness", "confident", "merge_rate",
-               "merges_elsewhere", "median_days_to_merge", "median_hours_to_first_response",
-               "outside_prs_sampled", "ai_policy", "cla")
+DEFAULT_DOMAIN = "oss.aadityad.dev"
+WEEKS = 26
+PR_FIELDS = ("repo", "number", "title", "summary", "url", "status", "created_at", "merged_at",
+             "updated_at")
 
 
-def publishable(suggestion: dict, briefing: dict, repo: dict) -> bool:
-    return (suggestion.get("status") in FINISHED
-            and bool(suggestion.get("pr_url"))
-            and briefing.get("mode", "draft") == "draft"
-            and not briefing.get("_problems")
-            and repo.get("ai_policy") != "restrictive")
+def _week_start(ts: datetime) -> datetime:
+    day = ts.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return day - timedelta(days=day.weekday())
 
 
-def build_payload(cfg: Config, data: Path, st: dict, domain: str | None = None) -> dict:
-    contributions = st.get("contributions", {})
-    repos = st.get("repos", {})
-    all_b = {b["key"]: b for b in briefings.load_all(data)}
+def activity(prs: list[dict], issues: list[dict], now: datetime) -> dict:
+    """Weekly counts of PRs opened or merged and issues filed."""
+    counts: dict[datetime, int] = {}
+    for stamp in ([p.get("created_at") for p in prs] + [p.get("merged_at") for p in prs]
+                  + [i.get("created_at") for i in issues]):
+        if ts := parse_ts(stamp):
+            counts[_week_start(ts)] = counts.get(_week_start(ts), 0) + 1
+    this_week = _week_start(now)
+    weeks = [this_week - timedelta(weeks=n) for n in range(WEEKS - 1, -1, -1)]
+    # the current week may still be quiet: a streak ending last week is still alive
+    cursor = this_week if this_week in counts else this_week - timedelta(weeks=1)
+    streak = 0
+    while cursor in counts:
+        streak += 1
+        cursor -= timedelta(weeks=1)
+    return {"weeks": [{"week": w.date().isoformat(), "n": counts.get(w, 0)} for w in weeks],
+            "weeks_active": len(counts), "streak": streak}
 
-    finished = []
-    for key, s in st.get("suggestions", {}).items():
-        b = all_b.get(key)
-        if b and publishable(s, b, repos.get(s["repo"], {})):
-            finished.append({"key": key, "repo": s["repo"], "title": s["title"], "url": s["url"],
-                             "pr_url": s["pr_url"], "status": s["status"],
-                             "briefing": {k: b[k] for k in BRIEFING_FIELDS if k in b}})
 
-    research = []
-    for name, r in repos.items():
-        if "friendliness" not in r:
-            continue
-        tier = cfg.tier_of(name)
-        research.append({**{k: r.get(k) for k in REPO_FIELDS}, "repo": name,
-                         "tier": tier.name if tier else "Discovered"})
-    research.sort(key=lambda r: r["friendliness"], reverse=True)
+def projects_of(prs: list[dict], per_repo: dict, repos: dict) -> list[dict]:
+    """Projects with a merged or open PR, most merged first."""
+    found: dict[str, dict] = {}
+    for p in prs:
+        r = found.setdefault(p["repo"], {"repo": p["repo"], "merged": 0, "open": 0})
+        r[p["status"]] += 1
+    out = []
+    for name, r in found.items():
+        info = repos.get(name, {})
+        out.append({**r, "stars": info.get("stars"), "language": info.get("language"),
+                    "ladder": per_repo.get(name, {}).get("ladder")})
+    return sorted(out, key=lambda r: (-r["merged"], -r["open"], r["repo"]))
 
+
+def build_payload(cfg: Config, st: dict, domain: str | None = None,
+                  now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    c = st.get("contributions", {})
+    # external contributions only: team_prs are never read
+    # only merged and open PRs: the page shows what landed and what is in review
+    prs = [{k: p.get(k) for k in PR_FIELDS} for p in c.get("prs", [])
+           if p.get("status") in ("merged", "open")]
+    issues = [{k: i.get(k) for k in ("repo", "number", "title", "url", "state", "created_at")}
+              for i in c.get("issues", [])]
+    reviews = [{k: r.get(k) for k in ("repo", "number", "title", "url")}
+               for r in c.get("reviews", [])]
+    projects = projects_of(prs, c.get("per_repo", {}), st.get("repos", {}))
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": now.isoformat(timespec="seconds"),
         "login": cfg.login,
-        "domain": domain,
-        # external contributions only: team_prs and private repos never reach this page
-        "prs": [{k: p.get(k) for k in PR_FIELDS} for p in contributions.get("prs", [])],
-        "reviews": [{k: r.get(k) for k in ("repo", "number", "title", "url", "updated_at")}
-                    for r in contributions.get("reviews", [])],
-        "issues": [{k: i.get(k) for k in ("repo", "number", "title", "url", "state", "created_at")}
-                   for i in contributions.get("issues", [])],
-        "per_repo": contributions.get("per_repo", {}),
-        "research": research,
-        "finished": finished,
+        "url": f"https://{domain or DEFAULT_DOMAIN}/",
+        "merged_prs": sum(p["status"] == "merged" for p in prs),
+        "open_prs": sum(p["status"] == "open" for p in prs),
+        "projects": projects,
+        "prs": prs,
+        "issues": issues,
+        "reviews": reviews,
+        "activity": activity(prs, issues, now),
     }
 
 
-def render(cfg: Config, data: Path, st: dict, out: Path, domain: str | None = None) -> Path:
+def build_stats(payload: dict) -> dict:
+    """The small JSON that other sites (the portfolio) can fetch."""
+    projects = [{k: p[k] for k in ("repo", "merged", "open")} for p in payload["projects"]]
+    return {"generated_at": payload["generated_at"], "merged_prs": payload["merged_prs"],
+            "open_prs": payload["open_prs"], "projects": projects,
+            "top_projects": [p["repo"] for p in projects[:3]], "url": payload["url"]}
+
+
+def description(payload: dict) -> str:
+    merged = payload["merged_prs"]
+    if not merged:
+        return "Open source contributions by Aaditya Desai, tracked from GitHub."
+    projects = sum(p["merged"] > 0 for p in payload["projects"])
+    return (f"Aaditya Desai has {merged} merged pull request{'s' * (merged != 1)} across "
+            f"{projects} open source project{'s' * (projects != 1)}.")
+
+
+def render(cfg: Config, st: dict, out: Path, domain: str | None = None) -> Path:
     out.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(build_payload(cfg, data, st, domain), default=str).replace("</", "<\\/")
-    html = (ROOT / "dashboard" / "public.html").read_text()
+    payload = build_payload(cfg, st, domain)
+    data = json.dumps(payload, default=str).replace("</", "<\\/")
+    page_html = (ROOT / "dashboard" / "public.html").read_text()
+    page_html = (page_html.replace("__PAGE_URL__", html.escape(payload["url"], quote=True))
+                 .replace("__DESCRIPTION__", html.escape(description(payload), quote=True))
+                 .replace("/*__SCOUT_PUBLIC__*/null", data))
     page = out / "index.html"
-    page.write_text(html.replace("/*__SCOUT_PUBLIC__*/null", payload))
+    page.write_text(page_html)
+    (out / "stats.json").write_text(json.dumps(build_stats(payload), indent=2) + "\n")
     if domain:
         (out / "CNAME").write_text(domain + "\n")
     return page

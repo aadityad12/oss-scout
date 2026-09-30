@@ -4,339 +4,306 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Open Source · Aaditya Desai</title>
-<meta name="description" content="Open source contributions from Aaditya Desai, tracked automatically from GitHub: merged pull requests, reviews given, and per-project research.">
+<meta name="description" content="__DESCRIPTION__">
+<link rel="canonical" href="__PAGE_URL__">
 <meta property="og:title" content="Open Source · Aaditya Desai">
-<meta property="og:description" content="Open source contributions from Aaditya Desai, tracked automatically from GitHub: merged pull requests, reviews given, and per-project research.">
+<meta property="og:description" content="__DESCRIPTION__">
 <meta property="og:type" content="website">
+<meta property="og:url" content="__PAGE_URL__">
+<meta property="og:image" content="https://aadityad.dev/og-v2.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Open Source · Aaditya Desai">
+<meta name="twitter:description" content="__DESCRIPTION__">
+<meta name="twitter:image" content="https://aadityad.dev/og-v2.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600&family=Martian+Mono:wght@400;500&display=swap">
 <style>
 :root {
-  --bg: #f4f6f5;
-  --surface: #ffffff;
-  --sunken: #eaefed;
-  --ink: #16201d;
-  --muted: #5b6964;
-  --line: #d9e1de;
-  --accent: #1e6b5a;
-  --accent-soft: #d8ebe5;
-  --open: #1a7f37;
-  --merged: #8250df;
-  --closed: #cf222e;
-  --wait: #b35900;
-  --wait-soft: #fff1e0;
-  --neutral: #6e7781;
-  --add-bg: #e6f4ea;
-  --add-ink: #13602b;
-  --del-bg: #fbe9eb;
-  --del-ink: #a0111f;
-  --shadow: 0 1px 2px rgba(22, 32, 29, .06), 0 4px 16px rgba(22, 32, 29, .05);
-  --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
-  --body: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --bg: #faf5ec;
+  --surface: #fffdf8;
+  --sunken: #f0e9da;
+  --ink: #221f1a;
+  --muted: #6f6a5f;
+  --line: #e3dbcc;
+  --accent: #e4572e;
+  --accent-soft: #fbe3d9;
+  --merged: #6f4fc4;
+  --merged-soft: #ece6f9;
+  --open: #3e7c4f;
+  --open-soft: #e0efe3;
+  --shadow: 0 1px 2px rgba(34, 31, 26, .05), 0 6px 20px rgba(34, 31, 26, .05);
+  --display: "Fraunces", Georgia, "Times New Roman", serif;
+  --body: "Instrument Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Martian Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #0e1412; --surface: #151d1a; --sunken: #1b2522; --ink: #e3ebe7; --muted: #93a39d;
-    --line: #27322e; --accent: #5fc3a8; --accent-soft: #1d3a32; --open: #3fb950; --merged: #a371f7;
-    --closed: #f85149; --wait: #f0a04b; --wait-soft: #3a2a14; --neutral: #8b949e;
-    --add-bg: #12301d; --add-ink: #7ee2a0; --del-bg: #3a1417; --del-ink: #ff9aa2;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+    --bg: #181612; --surface: #201d18; --sunken: #2a261f; --ink: #efe8da; --muted: #a69f90;
+    --line: #353027; --accent: #f0724c; --accent-soft: #3d241a; --merged: #a78bfa; --merged-soft: #2a2343;
+    --open: #6cc17f; --open-soft: #1d3324; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0e1412; --surface: #151d1a; --sunken: #1b2522; --ink: #e3ebe7; --muted: #93a39d;
-  --line: #27322e; --accent: #5fc3a8; --accent-soft: #1d3a32; --open: #3fb950; --merged: #a371f7;
-  --closed: #f85149; --wait: #f0a04b; --wait-soft: #3a2a14; --neutral: #8b949e;
-  --add-bg: #12301d; --add-ink: #7ee2a0; --del-bg: #3a1417; --del-ink: #ff9aa2;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  --bg: #181612; --surface: #201d18; --sunken: #2a261f; --ink: #efe8da; --muted: #a69f90;
+  --line: #353027; --accent: #f0724c; --accent-soft: #3d241a; --merged: #a78bfa; --merged-soft: #2a2343;
+  --open: #6cc17f; --open-soft: #1d3324; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
 }
 
 * { box-sizing: border-box; }
 html, body { max-width: 100%; overflow-x: hidden; }
-body {
-  background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body);
-  padding-inline: 16px; padding-block: 20px 48px; margin: 0;
-}
-.wrap { max-width: 920px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
-.wrap > * { min-width: 0; }
-a { color: var(--accent); text-underline-offset: 2px; }
-a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -.01em; }
-code, .mono { font-family: var(--mono); font-size: .88em; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.55 var(--body); margin: 0; padding: 0 16px 56px; }
+.wrap { max-width: 960px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 44px; }
+.wrap > *, section > * { min-width: 0; }
+section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: -.01em; text-wrap: balance; }
 .muted { color: var(--muted); }
-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-section > * { min-width: 0; }
-.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-family: var(--body); font-weight: 600; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.section-title h2 { font-size: 24px; font-weight: 600; }
+.section-title span { font-size: 14px; color: var(--muted); }
 
 /* header */
-.top { display: grid; gap: 8px; }
-.top h1 { font-size: 28px; font-weight: 800; }
-.top p.sub { margin: 0; color: var(--muted); }
-.top .links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14px; }
-.top .updated { font-size: 13px; color: var(--muted); }
+.nav { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 0 0; font-size: 14px; flex-wrap: wrap; }
+.nav a { color: var(--ink); text-decoration: none; font-weight: 500; }
+.nav a:hover { color: var(--accent); }
+.nav .right { display: flex; gap: 18px; }
+.hero { display: grid; gap: 14px; padding-top: 8px; }
+.hero h1 { font-size: clamp(34px, 7vw, 56px); line-height: 1.05; font-weight: 700; }
+.hero p { margin: 0; max-width: 58ch; font-size: 18px; color: var(--muted); }
 
-.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
-.stat b { font: 700 24px/1.1 var(--display); font-variant-numeric: tabular-nums; }
-.stat span { font-size: 12px; color: var(--muted); letter-spacing: .02em; }
-@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* stats */
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; display: grid; gap: 4px; box-shadow: var(--shadow); }
+.stat b { font: 700 clamp(34px, 6vw, 48px)/1 var(--display); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 14px; color: var(--muted); }
+.stat.lead b { color: var(--merged); }
+.stats-note { margin: 0; font-size: 14px; color: var(--muted); }
+@media (max-width: 560px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat.lead { grid-column: 1 / -1; }
+}
 
-/* pills + chips */
-.status { font-size: 12px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 999px; color: #fff; white-space: nowrap; }
-.s-open { background: var(--open); }
-.s-merged { background: var(--merged); }
-.s-closed { background: var(--closed); }
+/* badges + chips */
+.badge { font: 500 11px/1 var(--mono); padding: 5px 8px; border-radius: 999px; white-space: nowrap; }
+.b-merged { background: var(--merged-soft); color: var(--merged); }
+.b-open { background: var(--open-soft); color: var(--open); }
+.chip { font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--sunken); color: var(--muted); white-space: nowrap; }
+
+/* projects */
+.projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.project { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; display: grid; gap: 10px; align-content: start; }
+.project .repo { font: 500 13px/1.3 var(--mono); color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.project .repo:hover { color: var(--accent); }
+.project .count { font: 600 26px/1.1 var(--display); }
+.project .count small { font: 400 15px var(--body); color: var(--muted); }
+.meter { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { font-size: 12px; line-height: 1; padding: 5px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); white-space: nowrap; }
-.chip.accent { background: var(--accent-soft); color: var(--accent); }
 
-/* lists */
-.list { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
-.row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: center; }
-.row:first-child { border-top: 0; }
-.row .t { min-width: 0; }
-.row .t a { font-weight: 500; text-decoration: none; color: var(--ink); }
-.row .t a:hover { color: var(--accent); }
-.row .k { font-family: var(--mono); font-size: 12px; color: var(--muted); display: block; overflow-wrap: anywhere; }
-.row .side { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+/* pull requests */
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.pr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 16px 20px; border-top: 1px solid var(--line); align-items: start; }
+.list > :first-child { border-top: 0; }
+.pr .repo { font: 400 12px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.pr h3 { font: 600 17px/1.35 var(--body); letter-spacing: 0; }
+.pr h3 a { color: var(--ink); text-decoration: none; }
+.pr h3 a:hover { color: var(--accent); text-decoration: underline; }
+.pr .summary { margin: 0; font-size: 14.5px; color: var(--muted); }
+.pr .side { display: grid; justify-items: end; gap: 6px; text-align: right; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.more { width: 100%; border: 0; border-top: 1px solid var(--line); background: var(--sunken); color: var(--ink); font: 500 14px var(--body); padding: 12px; cursor: pointer; }
+.more:hover { color: var(--accent); }
+.more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 560px) {
+  .pr { grid-template-columns: minmax(0, 1fr); }
+  .pr .side { justify-items: start; grid-auto-flow: column; justify-content: start; align-items: center; gap: 10px; text-align: left; }
+}
 
-.empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 12px; padding: 20px; display: grid; gap: 6px; }
-.empty h3 { font-size: 17px; }
+/* activity */
+.activity { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; display: grid; gap: 12px; }
+.weeks { display: grid; grid-template-columns: repeat(26, minmax(0, 1fr)); gap: 4px; }
+.weeks i { aspect-ratio: 1; border-radius: 3px; background: var(--sunken); display: block; }
+.weeks i.l1 { background: color-mix(in srgb, var(--accent) 38%, var(--sunken)); }
+.weeks i.l2 { background: color-mix(in srgb, var(--accent) 68%, var(--sunken)); }
+.weeks i.l3 { background: var(--accent); }
+.scale { display: flex; justify-content: space-between; font: 400 11px var(--mono); color: var(--muted); }
+.activity p { margin: 0; font-size: 14.5px; color: var(--muted); }
+.activity p b { color: var(--ink); font-weight: 600; }
 
-.ladder { display: grid; gap: 8px; padding: 14px 16px; }
-.ladder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
-.rungs { display: flex; gap: 3px; }
-.rungs i { width: 22px; height: 8px; border-radius: 2px; background: var(--sunken); display: block; }
-.rungs i.on { background: var(--accent); }
+/* also active */
+.also { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+@media (max-width: 680px) { .also { grid-template-columns: minmax(0, 1fr); } }
+.also h3 { font: 600 15px var(--body); padding: 14px 20px 10px; }
+.item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 10px 20px; border-top: 1px solid var(--line); font-size: 14px; }
+.item a { color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.item a:hover { color: var(--accent); text-decoration: underline; }
+.item .repo { grid-column: 1 / -1; font: 400 11.5px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.also .list > p { margin: 0; padding: 10px 20px 14px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
 
-/* finished work cards */
-.pick { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
-.pick-head { padding: 16px 18px 12px; display: grid; gap: 8px; }
-.pick-key { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
-.pick-key a { font-family: var(--mono); font-size: 13px; text-decoration: none; }
-.pick h3 { font-size: 19px; line-height: 1.3; }
-.pick details { border-top: 1px solid var(--line); }
-.pick summary { padding: 11px 18px; cursor: pointer; font-weight: 600; font-size: 14px; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
-.pick summary::-webkit-details-marker { display: none; }
-.pick summary::after { content: "+"; font-family: var(--mono); color: var(--muted); }
-.pick details[open] summary::after { content: "\2212"; }
-.pick .body { padding: 0 18px 16px; display: grid; gap: 10px; max-width: 100%; }
-@media (prefers-reduced-motion: no-preference) { .pick { transition: box-shadow .15s; } }
-.md { max-width: 70ch; }
-.md p, .md ul, .md ol { margin: 0 0 8px; }
-.md pre { background: var(--sunken); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
-.md code { background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
-.md pre code { background: none; padding: 0; }
-.qa { display: grid; gap: 10px; }
-.qa div { border-left: 2px solid var(--line); padding-left: 12px; }
-.qa b { display: block; }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 14px; }
-.kv dt { color: var(--muted); }
-.kv dd { margin: 0; }
-.finished-note { margin: 0; max-width: 70ch; }
+/* empty */
+.empty { background: var(--surface); border: 1.5px dashed var(--line); border-radius: 16px; padding: 32px 28px; display: grid; gap: 10px; justify-items: start; }
+.empty h2 { font-size: 26px; font-weight: 600; }
+.empty p { margin: 0; max-width: 56ch; color: var(--muted); }
+.empty .actions { display: flex; gap: 12px; flex-wrap: wrap; padding-top: 6px; }
+.button { display: inline-block; padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 500; font-size: 14px; background: var(--bg); }
+.button:hover { border-color: var(--accent); color: var(--accent); }
+.button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.button.primary:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-/* research table */
-.table { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
-table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
-th, td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); white-space: nowrap; }
-thead th { border-top: 0; font-weight: 600; color: var(--muted); font-size: 12px; letter-spacing: .03em; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; }
-.bar { display: inline-block; width: 60px; height: 6px; background: var(--sunken); border-radius: 3px; vertical-align: middle; margin-right: 8px; overflow: hidden; }
-.bar i { display: block; height: 100%; background: var(--accent); }
-.policy-restrictive { color: var(--closed); font-weight: 600; }
-.policy-disclosure { color: var(--wait); font-weight: 600; }
-.research-note { font-size: 13px; max-width: 76ch; }
-
-.how p { max-width: 70ch; margin: 0 0 6px; }
-.foot { font-size: 12px; color: var(--muted); }
+.foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 18px; }
+.foot a { color: var(--muted); }
+.foot a:hover { color: var(--accent); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header class="top">
-    <h1>Aaditya Desai</h1>
-    <p class="sub">Open source contributions, tracked straight from GitHub.</p>
-    <div class="links" id="links"></div>
-    <div class="updated" id="updated"></div>
+  <nav class="nav" aria-label="Site">
+    <a href="https://aadityad.dev">&larr; aadityad.dev</a>
+    <div class="right"><a id="gh-link" href="https://github.com/aadityad12" rel="noopener">GitHub</a></div>
+  </nav>
+
+  <header class="hero">
+    <span class="eyebrow">Open source</span>
+    <h1>Contributions to projects I don't own.</h1>
+    <p>Pull requests, reviews and issues in other people's open source projects. Every item links to the real thing on GitHub.</p>
   </header>
 
-  <section aria-label="Stats">
-    <div class="stats" id="stats"></div>
-  </section>
+  <main id="main" class="wrap"></main>
 
-  <section aria-labelledby="projects-title">
-    <h2 class="section-title" id="projects-title">Projects</h2>
-    <div id="projects"></div>
-  </section>
-
-  <section aria-labelledby="prs-title" id="prs-section" hidden>
-    <h2 class="section-title" id="prs-title">Pull requests</h2>
-    <div id="prs"></div>
-  </section>
-
-  <section aria-labelledby="finished-title" id="finished-section" hidden>
-    <h2 class="section-title" id="finished-title">Finished work</h2>
-    <p class="muted finished-note">Notes I prepared before working on each issue. The code in each pull request is my own work, reviewed and submitted by me.</p>
-    <div id="finished"></div>
-  </section>
-
-  <section aria-labelledby="research-title">
-    <h2 class="section-title" id="research-title">How projects treat outside contributors</h2>
-    <div id="research"></div>
-    <p class="muted research-note">Measured from each project's last 300 closed pull requests by occasional outside contributors: PRs from forks by people with fewer than 3 recent PRs. Staff usually push branches to the project itself, so they're left out.</p>
-  </section>
-
-  <section aria-labelledby="how-title" class="how">
-    <h2 class="section-title" id="how-title">How this works</h2>
-    <p>A nightly job scans issues in the projects I follow and measures how each project treats outside contributors.</p>
-    <p>An AI-assisted step prepares study notes for promising issues.</p>
-    <p>I decide what to work on, and I write and submit every contribution myself.</p>
-    <p><a id="repo-link" href="#" target="_blank" rel="noopener">The tool that does this ↗</a></p>
-  </section>
-
-  <p class="foot" id="footer"></p>
+  <footer class="foot">
+    <span id="updated"></span>
+    <span><a href="https://aadityad.dev">aadityad.dev</a> &middot; <a id="gh-foot" href="https://github.com/aadityad12" rel="noopener">GitHub</a></span>
+  </footer>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 <script>
 const DATA = /*__SCOUT_PUBLIC__*/null;
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const md = s => {
-  if (!s) return "";
-  if (window.marked && window.DOMPurify) return DOMPurify.sanitize(marked.parse(String(s)));
-  return `<p>${esc(s).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
-};
-const STATUS = { open: "Open", merged: "Merged", closed: "Closed" };
-const status = s => `<span class="status s-${esc(s)}">${esc(STATUS[s] || s)}</span>`;
-const ago = iso => {
-  if (!iso) return "";
-  const d = (Date.now() - new Date(iso)) / 86400000;
-  if (d < 1 / 24) return "just now";
-  if (d < 1) return `${Math.round(d * 24)}h ago`;
-  if (d < 60) return `${Math.round(d)}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-};
-const days = x => x == null ? "–" : x < 1 ? `${Math.round(x * 24)}h` : `${x.toFixed(x < 10 ? 1 : 0)}d`;
-const hours = h => h == null ? "–" : h < 48 ? `${Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
-const pct = x => x == null ? "–" : `${Math.round(x * 100)}%`;
+const safeUrl = u => /^https:\/\/github\.com\//.test(u || "") ? u : "#";
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
+const fmtStars = n => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
+const INITIAL_PRS = 10;
 
-const RUNGS = ["Getting started", "Contributor", "Regular contributor", "Trusted contributor", "Maintainer"];
-
-function row(r) {
-  return `<div class="row">
-    <div class="t"><span class="k">${esc(r.repo)}#${esc(r.number)}</span><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div>
-    <div class="side"><span class="chip">${esc(ago(r.merged_at || r.updated_at))}</span>${status(r.status)}</div>
-  </div>`;
-}
-
-function renderProjects() {
-  const per = Object.entries(DATA.per_repo || {}).sort((a, b) => b[1].merged - a[1].merged || b[1].open - a[1].open);
-  if (!per.length) {
-    return `<div class="empty"><h3>Getting started</h3><p class="muted">First contributions are in progress. This page updates every night.</p></div>`;
-  }
-  return `<div class="list"><div class="ladder">${per.map(([repo, r]) => {
-    const lvl = RUNGS.indexOf(r.ladder);
-    return `<div class="ladder-row"><div><span class="mono">${esc(repo)}</span><div class="muted" style="font-size:13px">${esc(r.ladder)} · ${r.merged} merged · ${r.open} open</div></div>
-      <div class="rungs" title="${esc(r.ladder)}">${RUNGS.slice(1).map((_, i) => `<i class="${i < lvl ? "on" : ""}"></i>`).join("")}</div></div>`;
-  }).join("")}</div></div>`;
-}
-
-function renderPrs() {
-  const prs = [...(DATA.prs || [])].sort((a, b) => (b.merged_at || b.updated_at || "").localeCompare(a.merged_at || a.updated_at || ""));
-  return `<div class="list">${prs.map(row).join("")}</div>`;
-}
-
-function finishedCard(f) {
-  const b = f.briefing || {};
-  const tests = b.tests || {};
-  const qa = (b.maintainer_qa || []).map(x => `<div><b>${esc(x.q)}</b>${md(x.a)}</div>`).join("");
-  const alts = (b.alternatives || []).map(a => `<li>${esc(a)}</li>`).join("");
-  const sec = (title, inner, open = false) => inner ? `<details${open ? " open" : ""}><summary>${title}</summary><div class="body">${inner}</div></details>` : "";
-  return `<article class="pick">
-    <div class="pick-head">
-      <div class="pick-key"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.repo)}#${esc(f.key ? f.key.split("#")[1] : "")} ↗</a>${status(f.status)}</div>
-      <h3>${esc(b.title || f.title)}</h3>
-      <div class="chips">
-        <a class="chip" href="${esc(f.pr_url)}" target="_blank" rel="noopener">the pull request ↗</a>
-        ${b.difficulty ? `<span class="chip accent">${esc(b.difficulty)}</span>` : ""}
-        <span class="chip accent">AI-assisted briefing</span>
-      </div>
+function prRow(p) {
+  const merged = p.status === "merged";
+  const when = merged ? `Merged ${fmtDate(p.merged_at)}` : `Opened ${fmtDate(p.created_at)}`;
+  // "what I fixed": the PR's own summary when there is one, the title otherwise
+  const headline = p.summary || p.title;
+  const sub = p.summary ? `<p class="summary">${esc(p.title)}</p>` : "";
+  return `<article class="pr">
+    <div>
+      <div class="repo">${esc(p.repo)} #${esc(p.number)}</div>
+      <h3><a href="${esc(safeUrl(p.url))}" target="_blank" rel="noopener">${esc(headline)}</a></h3>
+      ${sub}
     </div>
-    ${sec("Summary", b.summary ? `<div class="md">${md(b.summary)}</div>` : "", true)}
-    ${sec("Why this issue", b.why ? `<div class="md">${md(b.why)}</div>` : "")}
-    ${sec("How the code works", b.walkthrough ? `<div class="md">${md(b.walkthrough)}</div>` : "")}
-    ${sec("The change", b.change_explained ? `<div class="md">${md(b.change_explained)}</div>${alts ? `<div><b>Other approaches considered</b><ul>${alts}</ul></div>` : ""}` : "")}
-    ${sec("Questions a reviewer might ask", qa ? `<div class="qa">${qa}</div>` : "")}
-    ${sec("Testing", `<dl class="kv"><dt>Ran</dt><dd>${tests.ran ? "Yes" : "No"}</dd>${tests.command ? `<dt>Command</dt><dd><code>${esc(tests.command)}</code></dd>` : ""}${tests.result ? `<dt>Result</dt><dd>${esc(tests.result)}</dd>` : ""}${tests.not_verified ? `<dt>Still to check</dt><dd>${esc(tests.not_verified)}</dd>` : ""}</dl>`)}
+    <div class="side"><span class="badge ${merged ? "b-merged" : "b-open"}">${merged ? "Merged" : "In review"}</span><span>${esc(when)}</span></div>
   </article>`;
 }
 
-function renderFinished() {
-  return (DATA.finished || []).map(finishedCard).join("");
+function projectCard(p, max) {
+  const chips = [p.language && `<span class="chip">${esc(p.language)}</span>`,
+                 p.stars != null && `<span class="chip">&#9733; ${esc(fmtStars(p.stars))}</span>`,
+                 p.merged && p.open ? `<span class="chip">${esc(p.open)} in review</span>` : ""].filter(Boolean).join("");
+  const count = p.merged
+    ? `${p.merged} <small>merged</small>`
+    : `${p.open} <small>in review</small>`;
+  return `<div class="project">
+    <a class="repo" href="https://github.com/${esc(p.repo)}" target="_blank" rel="noopener">${esc(p.repo)}</a>
+    <div class="count">${count}</div>
+    <div class="meter" aria-hidden="true"><i style="width:${Math.max(8, Math.round(100 * p.merged / max))}%"></i></div>
+    ${chips ? `<div class="chips">${chips}</div>` : ""}
+  </div>`;
 }
 
-function renderResearch() {
-  const repos = DATA.research || [];
-  return `<div class="table"><table><thead><tr><th>Project</th><th>Friendliness</th><th class="num">Merged</th><th class="num">Time to merge</th><th class="num">First reply</th><th>AI policy</th><th>CLA</th></tr></thead><tbody>
-  ${repos.map(r => `<tr>
-    <td><a href="https://github.com/${esc(r.repo)}" target="_blank" rel="noopener" class="mono">${esc(r.repo)}</a><div class="muted" style="font-size:12px">${esc(r.tier)}${r.language ? ` · ${esc(r.language)}` : ""}</div></td>
-    <td><span class="bar"><i style="width:${Math.round((r.friendliness || 0) * 100)}%"></i></span><span class="mono">${Math.round((r.friendliness || 0) * 100)}</span>${r.confident ? "" : ` <span class="muted" title="Fewer than 5 outside PRs to measure">?</span>`}</td>
-    <td class="num">${r.merges_elsewhere ? `<span class="muted" title="Outside PRs are closed on GitHub and landed through an internal mirror, so merges can't be counted here">elsewhere</span>` : pct(r.merge_rate)}</td>
-    <td class="num">${r.merges_elsewhere ? "–" : days(r.median_days_to_merge)}</td>
-    <td class="num">${hours(r.median_hours_to_first_response)}</td>
-    <td class="policy-${esc(r.ai_policy)}">${esc({ restrictive: "Restrictive", disclosure: "Disclose", mentioned: "Mentioned", none: "–" }[r.ai_policy] || r.ai_policy || "–")}</td>
-    <td>${r.cla ? "Yes" : "–"}</td></tr>`).join("")}
-  </tbody></table></div>`;
+function renderActivity(a) {
+  const weeks = a.weeks || [];
+  const cells = weeks.map(w => `<i class="${w.n ? "l" + Math.min(w.n, 3) : ""}" title="${esc(`Week of ${fmtDate(w.week)}: ${plural(w.n, "contribution")}`)}"></i>`).join("");
+  const last26 = weeks.filter(w => w.n).length;
+  const bits = [`Active in <b>${last26}</b> of the last ${weeks.length} weeks`];
+  if (a.streak > 1) bits.push(`a <b>${a.streak}-week</b> streak`);
+  return `<div class="activity">
+    <div class="weeks" role="img" aria-label="${esc(bits.join(", ").replace(/<\/?b>/g, ""))}">${cells}</div>
+    <div class="scale"><span>${esc(weeks.length)} weeks ago</span><span>this week</span></div>
+    <p>${bits.join(", ")}.</p>
+  </div>`;
+}
+
+function alsoList(title, items, line) {
+  if (!items.length) return "";
+  const shown = items.slice(0, 5).map(i => `<div class="item"><span class="repo">${esc(i.repo)} #${esc(i.number)}</span><a href="${esc(safeUrl(i.url))}" target="_blank" rel="noopener">${esc(i.title)}</a>${line(i)}</div>`).join("");
+  const rest = items.length > 5 ? `<p>and ${items.length - 5} more</p>` : "";
+  return `<div class="list"><h3>${esc(title)} <span class="muted">${items.length}</span></h3>${shown}${rest}</div>`;
+}
+
+function renderEmpty() {
+  return `<div class="empty">
+    <span class="eyebrow">Status</span>
+    <h2>First contributions in progress</h2>
+    <p>Merged pull requests, the projects they landed in, and reviews I've given will show up here as they happen. Nothing to show yet, and nothing padded in the meantime.</p>
+    <div class="actions"><a class="button primary" href="https://github.com/${esc(DATA.login)}" target="_blank" rel="noopener">See my GitHub</a><a class="button" href="https://aadityad.dev">Back to my portfolio</a></div>
+  </div>`;
 }
 
 function boot() {
-  if (!DATA) {
-    $(".wrap").innerHTML = `<div class="empty"><h3>Nothing published yet</h3><p class="muted">Check back soon — this page updates every night.</p></div>`;
-    return;
-  }
-  const login = DATA.login || "";
-  $("#links").innerHTML = [
-    [`https://github.com/${login}`, "GitHub"],
-    [`https://github.com/${login}/oss-scout`, "oss-scout"],
-    ["https://aadityad.dev", "aadityad.dev"],
-  ].map(([href, label]) => `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(label)}</a>`).join("");
-  $("#updated").textContent = `Updated ${ago(DATA.generated_at)}`;
-  $("#repo-link").href = `https://github.com/${esc(login)}/oss-scout`;
+  const main = $("#main");
+  if (!DATA) { main.innerHTML = `<div class="empty"><h2>First contributions in progress</h2><p>Check back soon.</p></div>`; return; }
+  const gh = `https://github.com/${DATA.login}`;
+  $("#gh-link").href = gh;
+  $("#gh-foot").href = gh;
+  $("#updated").textContent = `Updated ${fmtDate(DATA.generated_at)}`;
 
   const prs = DATA.prs || [];
-  const merged = prs.filter(p => p.status === "merged").length;
-  const open = prs.filter(p => p.status === "open").length;
-  const reviews = (DATA.reviews || []).length;
-  const projects = Object.keys(DATA.per_repo || {}).length;
-  $("#stats").innerHTML = [
-    [merged, "merged pull requests"],
-    [open, "open pull requests"],
-    [reviews, "reviews given"],
-    [projects, "projects contributed to"],
-  ].map(([n, l]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join("");
+  if (!prs.length) { main.innerHTML = renderEmpty(); return; }
 
-  $("#projects").innerHTML = renderProjects();
+  const reviews = DATA.reviews || [], issues = DATA.issues || [];
+  const projects = DATA.projects || [];
+  const merged = projects.filter(p => p.merged).length;
+  const secondary = [reviews.length && plural(reviews.length, "review") + " given",
+                     issues.length && plural(issues.length, "issue") + " filed"].filter(Boolean).join(" &middot; ");
 
-  if (prs.length) {
-    $("#prs-section").hidden = false;
-    $("#prs").innerHTML = renderPrs();
+  const order = { open: 0, merged: 1 };
+  const sorted = [...prs].filter(p => p.status in order).sort((a, b) =>
+    order[a.status] - order[b.status] ||
+    (b.merged_at || b.created_at || "").localeCompare(a.merged_at || a.created_at || ""));
+
+  let html = `<section aria-label="Summary"><div class="stats">
+    <div class="stat lead"><b>${esc(DATA.merged_prs)}</b><span>merged pull requests</span></div>
+    <div class="stat"><b>${esc(merged)}</b><span>${merged === 1 ? "project" : "projects"} contributed to</span></div>
+    <div class="stat"><b>${esc(DATA.open_prs)}</b><span>open, in review</span></div>
+  </div>${secondary ? `<p class="stats-note">Also: ${secondary}</p>` : ""}</section>`;
+
+  html += `<section aria-labelledby="t-projects"><div class="section-title"><h2 id="t-projects">Projects</h2><span>ordered by merged pull requests</span></div>
+    <div class="projects">${projects.map(p => projectCard(p, Math.max(1, ...projects.map(x => x.merged)))).join("")}</div></section>`;
+
+  html += `<section aria-labelledby="t-prs"><div class="section-title"><h2 id="t-prs">Pull requests</h2><span>${plural(sorted.length, "pull request")}</span></div>
+    <div class="list" id="prs">${sorted.slice(0, INITIAL_PRS).map(prRow).join("")}${sorted.length > INITIAL_PRS ? `<button class="more" id="more" type="button">Show all ${sorted.length}</button>` : ""}</div></section>`;
+
+  const act = DATA.activity;
+  if (act && (act.weeks || []).some(w => w.n)) {
+    html += `<section aria-labelledby="t-activity"><div class="section-title"><h2 id="t-activity">Activity</h2><span>${plural(act.weeks_active, "active week")} in total</span></div>${renderActivity(act)}</section>`;
   }
 
-  if ((DATA.finished || []).length) {
-    $("#finished-section").hidden = false;
-    $("#finished").innerHTML = renderFinished();
+  if (reviews.length || issues.length) {
+    html += `<section aria-labelledby="t-also"><div class="section-title"><h2 id="t-also">Also active in</h2></div><div class="also">
+      ${alsoList("Reviews given", reviews, () => "")}
+      ${alsoList("Issues filed", issues, i => `<span class="chip">${esc(i.state === "closed" ? "closed" : "open")}</span>`)}
+    </div></section>`;
   }
 
-  $("#research").innerHTML = renderResearch();
-
-  $("#footer").textContent = `Generated ${new Date(DATA.generated_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.`;
+  main.innerHTML = html;
+  const more = $("#more");
+  if (more) more.addEventListener("click", () => {
+    $("#prs").innerHTML = sorted.map(prRow).join("");
+  });
 }
 boot();
 </script>
