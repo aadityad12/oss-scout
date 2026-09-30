@@ -61,9 +61,9 @@ Two scheduled jobs, neither of which needs a laptop:
   though GitHub often starts it hours late) runs the scanner and tracker, saves the
   results to a private data repo, and publishes the public page at
   **[scout.aadityad.dev](https://scout.aadityad.dev)**.
-- **A Claude Code routine** starts as soon as that workflow finishes, so it always
-  reads a fresh scan (a 7:37am Pacific run is the fallback and stops if the night's
-  work is already done). It reads those results, picks what's worth doing, prepares
+- **A Claude Code routine** is started by the workflow (through the routine's API
+  trigger) as soon as the scan is saved, so it always reads a fresh scan. A 7:37am
+  Pacific run is the fallback and stops if the night's work is already done. It reads those results, picks what's worth doing, prepares
   briefings, and refreshes a private dashboard. It never calls
   the GitHub API, which cloud sessions can't reach beyond their own repo; cloning
   public repos is enough.
