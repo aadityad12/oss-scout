@@ -1,166 +1,191 @@
 import json
+from datetime import datetime, timezone
 
-import pytest
-
-from scout import briefings, config, public, state as statemod
+from scout import config, public, state as statemod
 from scout.__main__ import main
 
-
-def good_briefing(key="o/r#7", mode="draft"):
-    repo, n = key.split("#")
-    return {
-        "key": key, "repo": repo, "number": int(n), "title": "Crash on empty input",
-        "url": f"https://github.com/{repo}/issues/{n}", "picked_at": "2026-09-26T03:10:00+00:00",
-        "summary": "s", "why": "w", "difficulty": "easy", "time_estimate": "1h",
-        "walkthrough": "w", "change_explained": "c", "alternatives": [], "maintainer_qa": [],
-        "tests": {"ran": False}, "claim_comment": "SECRET_CLAIM_TEXT",
-        "submit_steps": ["SECRET_STEP_TEXT"], "ai_disclosure": "none", "mode": mode,
-    }
+NOW = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)  # a Wednesday
 
 
-def write_briefing(data, b, patch="+x\n"):
-    d = data / "briefings" / briefings.slug(b["key"])
-    d.mkdir(parents=True)
-    (d / "briefing.json").write_text(json.dumps(b))
-    (d / "draft.patch").write_text(patch)
+def pr(repo, number, status="merged", created="2026-09-01T10:00:00Z", merged="2026-09-03T10:00:00Z",
+       **extra):
+    return {"repo": repo, "number": number, "title": f"Fix thing {number}",
+            "url": f"https://github.com/{repo}/pull/{number}", "status": status,
+            "created_at": created, "updated_at": merged or created,
+            "merged_at": merged if status == "merged" else None,
+            "author_association": "CONTRIBUTOR", "body": "PR_BODY_TEXT", **extra}
 
 
-def suggestion(repo="o/r", number=7, status="merged", pr_url="https://github.com/o/r/pull/7"):
-    return {"repo": repo, "number": number, "title": "Crash on empty input",
-            "url": f"https://github.com/{repo}/issues/{number}", "status": status,
-            "pr_url": pr_url, "suggested_at": "2026-09-20T00:00:00+00:00", "history": []}
-
-
-# -- publishable ------------------------------------------------------------
-
-def test_publishable_true_for_merged_or_closed_draft():
-    b = good_briefing()
-    assert public.publishable(suggestion(status="merged"), b, {}) is True
-    assert public.publishable(suggestion(status="closed"), b, {}) is True
-
-
-@pytest.mark.parametrize("status", ["suggested", "claimed", "pr_open"])
-def test_publishable_false_for_in_progress_statuses(status):
-    b = good_briefing()
-    assert public.publishable(suggestion(status=status), b, {}) is False
-
-
-def test_publishable_false_without_pr_url():
-    b = good_briefing()
-    assert public.publishable(suggestion(pr_url=""), b, {}) is False
-
-
-def test_publishable_false_for_guide_mode():
-    b = good_briefing(mode="guide")
-    assert public.publishable(suggestion(), b, {}) is False
-
-
-def test_publishable_false_for_restrictive_repo():
-    b = good_briefing()
-    assert public.publishable(suggestion(), b, {"ai_policy": "restrictive"}) is False
-
-
-# -- build_payload -----------------------------------------------------------
-
-def base_state(tmp_path):
+def state_with(tmp_path, prs=(), reviews=(), issues=()):
     st = statemod.load(tmp_path)
     st["contributions"] = {
-        "prs": [], "reviews": [], "issues": [],
-        "per_repo": {"o/r": {"merged": 1, "open": 0, "closed": 0, "maintainer": False,
-                              "ladder": "Contributor"}},
+        "prs": list(prs), "reviews": list(reviews), "issues": list(issues),
+        "per_repo": {"duckdb/duckdb": {"merged": 2, "open": 1, "closed": 0, "maintainer": False,
+                                        "ladder": "Contributor"}},
         "team_prs": [{"repo": "someone/private-thing", "number": 1, "title": "internal",
-                      "url": "https://github.com/someone/private-thing/pull/1",
-                      "status": "merged"}],
+                      "url": "https://github.com/someone/private-thing/pull/1", "status": "merged"}],
     }
-    st["repos"] = {"o/r": {"friendliness": 0.8, "confident": True, "merge_rate": 0.5,
-                           "merges_elsewhere": False, "median_days_to_merge": 2,
-                           "median_hours_to_first_response": 5, "outside_prs_sampled": 10,
-                           "ai_policy": "none", "cla": False, "stars": 100, "language": "Python"},
-                   "o/no-friendliness": {"stars": 5, "language": "Rust"}}
+    st["repos"] = {"duckdb/duckdb": {"stars": 30000, "language": "C++", "friendliness": 0.9}}
     return st
 
 
-def test_build_payload_excludes_team_prs(tmp_path):
-    st = base_state(tmp_path)
-    payload = public.build_payload(config.load(), tmp_path, st)
-    assert "private-thing" not in json.dumps(payload)
+def sample(tmp_path):
+    return state_with(
+        tmp_path,
+        prs=[pr("duckdb/duckdb", 1, merged="2026-09-03T10:00:00Z", summary="Stops a crash on empty input"),
+             pr("duckdb/duckdb", 2, merged="2026-09-10T10:00:00Z"),
+             pr("duckdb/duckdb", 3, status="open", created="2026-09-28T10:00:00Z", merged=None),
+             pr("o/r", 4, merged="2026-08-20T10:00:00Z"),
+             pr("o/r", 5, status="closed", merged=None),
+             pr("x/y", 6, status="open", created="2026-09-29T10:00:00Z", merged=None)],
+        reviews=[{"repo": "o/r", "number": 9, "title": "Review me", "url": "https://github.com/o/r/pull/9",
+                  "updated_at": "2026-09-01T00:00:00Z"}],
+        issues=[{"repo": "o/r", "number": 8, "title": "An issue", "url": "https://github.com/o/r/issues/8",
+                 "state": "open", "created_at": "2026-07-01T00:00:00Z"}])
 
 
-def test_build_payload_excludes_open_suggestions(tmp_path):
-    st = base_state(tmp_path)
-    write_briefing(tmp_path, good_briefing())
-    st["suggestions"] = {"o/r#7": suggestion(status="pr_open")}
-    payload = public.build_payload(config.load(), tmp_path, st)
-    assert payload["finished"] == []
+# -- payload ------------------------------------------------------------------
+
+def test_build_payload_counts_and_project_order(tmp_path):
+    p = public.build_payload(config.load(), sample(tmp_path), "oss.example.dev", NOW)
+    assert p["merged_prs"] == 3
+    assert p["open_prs"] == 2
+    assert p["url"] == "https://oss.example.dev/"
+    assert [(x["repo"], x["merged"], x["open"]) for x in p["projects"]] == [
+        ("duckdb/duckdb", 2, 1), ("o/r", 1, 0), ("x/y", 0, 1)]
+    top = p["projects"][0]
+    assert (top["stars"], top["language"]) == (30000, "C++")
+    assert p["projects"][1]["stars"] is None
 
 
-def test_build_payload_never_contains_claim_comment_or_submit_steps(tmp_path):
-    st = base_state(tmp_path)
-    write_briefing(tmp_path, good_briefing())
-    st["suggestions"] = {"o/r#7": suggestion(status="merged")}
-    payload = public.build_payload(config.load(), tmp_path, st)
-    dumped = json.dumps(payload)
-    assert "SECRET_CLAIM_TEXT" not in dumped
-    assert "SECRET_STEP_TEXT" not in dumped
+def test_build_payload_keeps_only_merged_and_open_prs(tmp_path):
+    p = public.build_payload(config.load(), sample(tmp_path), None, NOW)
+    assert {x["status"] for x in p["prs"]} == {"merged", "open"}
+    assert p["url"] == "https://oss.aadityad.dev/"
 
 
-def test_build_payload_includes_merged_draft_briefing_with_pr_url(tmp_path):
-    st = base_state(tmp_path)
-    write_briefing(tmp_path, good_briefing())
-    st["suggestions"] = {"o/r#7": suggestion(status="merged", pr_url="https://github.com/o/r/pull/7")}
-    payload = public.build_payload(config.load(), tmp_path, st)
-    assert len(payload["finished"]) == 1
-    f = payload["finished"][0]
-    assert f["key"] == "o/r#7"
-    assert f["pr_url"] == "https://github.com/o/r/pull/7"
-    assert f["briefing"]["summary"] == "s"
+def test_build_payload_excludes_team_prs_and_pr_bodies(tmp_path):
+    dumped = json.dumps(public.build_payload(config.load(), sample(tmp_path), None, NOW))
+    assert "private-thing" not in dumped
+    assert "PR_BODY_TEXT" not in dumped
 
 
-def test_build_payload_research_excludes_repos_without_friendliness(tmp_path):
-    st = base_state(tmp_path)
-    payload = public.build_payload(config.load(), tmp_path, st)
-    repos = {r["repo"] for r in payload["research"]}
-    assert repos == {"o/r"}
-    assert "o/no-friendliness" not in repos
+def test_build_payload_uses_summary_when_present(tmp_path):
+    p = public.build_payload(config.load(), sample(tmp_path), None, NOW)
+    by_number = {x["number"]: x for x in p["prs"]}
+    assert by_number[1]["summary"] == "Stops a crash on empty input"
+    assert by_number[2]["summary"] is None
 
 
-# -- render -------------------------------------------------------------------
+def test_activity_weeks_and_streak(tmp_path):
+    st = state_with(tmp_path, prs=[
+        pr("o/r", 1, created="2026-09-16T00:00:00Z", merged="2026-09-17T00:00:00Z"),  # week of 09-14
+        pr("o/r", 2, created="2026-09-22T00:00:00Z", merged=None, status="open"),     # week of 09-21
+        pr("o/r", 3, created="2026-06-01T00:00:00Z", merged="2026-06-02T00:00:00Z")])  # isolated
+    a = public.build_payload(config.load(), st, None, NOW)["activity"]
+    assert len(a["weeks"]) == public.WEEKS
+    assert a["weeks"][-1] == {"week": "2026-09-28", "n": 0}
+    assert {w["week"]: w["n"] for w in a["weeks"]}["2026-09-14"] == 2
+    assert a["streak"] == 2  # this week is quiet, but last week and the one before count
+    assert a["weeks_active"] == 3
 
-def test_render_writes_index_and_replaces_placeholder(tmp_path):
-    st = base_state(tmp_path)
-    out_dir = tmp_path / "site"
-    page = public.render(config.load(), tmp_path, st, out_dir)
+
+def test_activity_empty(tmp_path):
+    a = public.build_payload(config.load(), state_with(tmp_path), None, NOW)["activity"]
+    assert a["streak"] == 0 and a["weeks_active"] == 0
+    assert all(w["n"] == 0 for w in a["weeks"])
+
+
+# -- stats.json -----------------------------------------------------------------
+
+def test_build_stats_shape(tmp_path):
+    payload = public.build_payload(config.load(), sample(tmp_path), "oss.example.dev", NOW)
+    s = public.build_stats(payload)
+    assert set(s) == {"generated_at", "merged_prs", "open_prs", "projects", "top_projects", "url"}
+    assert s["merged_prs"] == 3 and s["open_prs"] == 2
+    assert s["projects"][0] == {"repo": "duckdb/duckdb", "merged": 2, "open": 1}
+    assert s["top_projects"] == ["duckdb/duckdb", "o/r", "x/y"]
+    assert s["url"] == "https://oss.example.dev/"
+
+
+def test_build_stats_empty(tmp_path):
+    s = public.build_stats(public.build_payload(config.load(), state_with(tmp_path), None, NOW))
+    assert s["merged_prs"] == 0 and s["open_prs"] == 0
+    assert s["projects"] == [] and s["top_projects"] == []
+
+
+# -- render ---------------------------------------------------------------------
+
+def test_render_writes_index_stats_and_cname(tmp_path):
+    out = tmp_path / "site"
+    page = public.render(config.load(), sample(tmp_path), out, "oss.example.dev")
     html = page.read_text()
-    assert "/*__SCOUT_PUBLIC__*/null" not in html
     assert page.name == "index.html"
-    assert not (out_dir / "CNAME").exists()
+    assert "/*__SCOUT_PUBLIC__*/null" not in html
+    assert "__PAGE_URL__" not in html and "__DESCRIPTION__" not in html
+    assert '<link rel="canonical" href="https://oss.example.dev/">' in html
+    assert "3 merged pull requests across 2 open source projects" in html
+    assert (out / "CNAME").read_text() == "oss.example.dev\n"
+    assert json.loads((out / "stats.json").read_text())["top_projects"][0] == "duckdb/duckdb"
 
 
-def test_render_writes_cname_only_with_domain(tmp_path):
-    st = base_state(tmp_path)
-    out_dir = tmp_path / "site"
-    public.render(config.load(), tmp_path, st, out_dir, domain="scout.example.dev")
-    assert (out_dir / "CNAME").read_text() == "scout.example.dev\n"
+def test_render_without_domain_writes_no_cname(tmp_path):
+    out = tmp_path / "site"
+    public.render(config.load(), sample(tmp_path), out)
+    assert not (out / "CNAME").exists()
 
 
-def test_render_escapes_script_close_tag_in_briefing(tmp_path):
-    st = base_state(tmp_path)
-    b = good_briefing()
-    b["summary"] = "breaks on </script><script>alert(1)</script>"
-    write_briefing(tmp_path, b)
-    st["suggestions"] = {"o/r#7": suggestion(status="merged")}
-    out_dir = tmp_path / "site"
-    page = public.render(config.load(), tmp_path, st, out_dir)
+def test_render_empty_state(tmp_path):
+    out = tmp_path / "site"
+    page = public.render(config.load(), state_with(tmp_path), out, "oss.example.dev")
     html = page.read_text()
+    assert "First contributions in progress" in html
+    assert "Open source contributions by Aaditya Desai" in html
+    stats = json.loads((out / "stats.json").read_text())
+    assert stats["merged_prs"] == 0 and stats["projects"] == []
+    assert json.loads(html.split("const DATA = ")[1].split(";\n")[0])["prs"] == []
+
+
+def test_render_escapes_script_close_tag_in_titles(tmp_path):
+    st = state_with(tmp_path, prs=[pr("o/r", 1, title="x")])
+    st["contributions"]["prs"][0]["title"] = "breaks </script><script>alert(1)</script>"
+    html = public.render(config.load(), st, tmp_path / "site").read_text()
     assert "</script><script>alert(1)" not in html
-    assert "breaks on" in html
+    assert "breaks" in html
 
 
-# -- CLI ----------------------------------------------------------------------
+def test_render_never_leaks_private_data(tmp_path):
+    """Briefings, suggestions, candidates and repo research must not reach the site."""
+    st = sample(tmp_path)
+    st["suggestions"] = {"o/r#7": {
+        "repo": "o/r", "number": 7, "title": "LEAK_SUGGESTION_TITLE", "status": "merged",
+        "url": "https://github.com/o/r/issues/7", "pr_url": "https://github.com/o/r/pull/7",
+        "suggested_at": "2026-09-20T00:00:00+00:00", "history": []}}
+    st["repos"]["duckdb/duckdb"].update({
+        "ai_policy": "LEAK_AI_POLICY", "merge_rate": 0.123456, "median_hours_to_first_response": 987654,
+        "cla": "LEAK_CLA"})
+    bdir = tmp_path / "briefings" / "o-r-7"
+    bdir.mkdir(parents=True)
+    (bdir / "briefing.json").write_text(json.dumps({
+        "key": "o/r#7", "summary": "LEAK_BRIEFING_SUMMARY", "claim_comment": "LEAK_CLAIM",
+        "submit_steps": ["LEAK_STEP"], "ai_disclosure": "LEAK_DISCLOSURE", "mode": "draft"}))
+    (bdir / "draft.patch").write_text("+LEAK_PATCH\n")
+    (tmp_path / "candidates.json").write_text(json.dumps([{"key": "o/r#7", "title": "LEAK_CANDIDATE"}]))
+
+    out = tmp_path / "site"
+    public.render(config.load(), st, out, "oss.example.dev")
+    combined = "\n".join(f.read_text() for f in out.iterdir())
+    for needle in ("LEAK_", "987654", "0.123456", "friendliness", "briefing", "suggestion",
+                   "candidate", "scout", "AI-assisted"):
+        assert needle not in combined, needle
+
+
+# -- CLI ------------------------------------------------------------------------
 
 def test_cli_render_public(tmp_path, monkeypatch):
     monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
     out_dir = tmp_path / "site"
-    main(["render-public", "--out", str(out_dir), "--domain", "scout.example.dev"])
+    main(["render-public", "--out", str(out_dir), "--domain", "oss.example.dev"])
     assert (out_dir / "index.html").exists()
-    assert (out_dir / "CNAME").read_text() == "scout.example.dev\n"
+    assert (out_dir / "stats.json").exists()
+    assert (out_dir / "CNAME").read_text() == "oss.example.dev\n"

@@ -1,0 +1,28 @@
+name = "oss-scout-dashboard"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# Only reachable at me.aadityad.dev, where Cloudflare Access sits in front.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "me.aadityad.dev", custom_domain = true }]
+
+[triggers]
+# 15:00 UTC = 8am Pacific (daylight time), 7am in winter. The daily email.
+crons = ["0 15 * * *"]
+
+[vars]
+OWNER_LOGIN = "aadityad12"
+OWNER_EMAIL = "aaditya.d.desai@gmail.com"
+DATA_REPO = "aadityad12/oss-scout-data"
+DATA_REF = "claude/scout-data"
+DASHBOARD_URL = "https://me.aadityad.dev"
+# From the Access app you create in worker/README.md step 1. Until both are filled
+# in, every request is refused.
+ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
+ACCESS_AUD = "REPLACE-WITH-THE-APPLICATION-AUD-TAG"
+# MAIL_FROM = "OSS Scout <scout@aadityad.dev>"   # default; change if you use another sender
+
+# Secrets (never put these here), set with `npx wrangler secret put <NAME>`:
+#   GITHUB_TOKEN    fine-grained token, only oss-scout-data: Contents read, Actions read and write
+#   RESEND_API_KEY  from resend.com

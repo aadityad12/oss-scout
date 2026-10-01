@@ -5,6 +5,11 @@ suggestions, and moves each suggestion along:
 
   suggested -> claimed -> pr_open -> waiting_on_you -> merged | closed
   suggested -> skipped (untouched too long) | taken (someone else got it)
+  ready -> approved -> submitting -> pr_open -> ...   (a fully prepared pick; the
+                                                     submit step moves it to approved
+                                                     and onwards)
+  ready | approved | submitting -> posted   (comment-only items, once posted)
+  ready -> skipped | taken                   (stale or gone; approved items are never skipped)
 """
 
 from __future__ import annotations
@@ -15,7 +20,9 @@ from datetime import datetime, timezone
 from .github import GitHub
 from .score import MAINTAINER, _days, parse_ts
 
-ACTIVE = {"suggested", "claimed", "pr_open", "waiting_on_you"}
+PENDING = {"ready", "approved", "submitting"}  # prepared, not yet a PR or a posted comment
+ACTIVE = {"suggested", "claimed", "pr_open", "waiting_on_you"} | PENDING
+MAX_REVIEW_COMMENTS = 10
 
 
 def ladder(merged: int, maintainer: bool) -> str:
@@ -34,26 +41,46 @@ def _repo_of(item: dict) -> str:
     return item["repository_url"].split("/repos/", 1)[1]
 
 
-def waiting_on_you(gh: GitHub, repo: str, number: int, login: str) -> bool:
-    """True when the latest human word on the PR is someone else's."""
-    mine, theirs = [], []
+def review_state(gh: GitHub, repo: str, number: int, login: str) -> tuple[bool, list[dict]]:
+    """(waiting on you?, the latest comments from others you haven't answered yet)."""
+    mine: list[datetime] = []
+    theirs: list[tuple[datetime, dict]] = []
     sources = [
-        (f"repos/{repo}/issues/{number}/comments", "created_at"),
-        (f"repos/{repo}/pulls/{number}/reviews", "submitted_at"),
-        (f"repos/{repo}/pulls/{number}/comments", "created_at"),
+        (f"repos/{repo}/issues/{number}/comments", "created_at", "comment"),
+        (f"repos/{repo}/pulls/{number}/reviews", "submitted_at", "review"),
+        (f"repos/{repo}/pulls/{number}/comments", "created_at", "inline"),
     ]
-    for path, field in sources:
+    for path, field, kind in sources:
         for c in gh.paginate(path, max_items=100, ttl=1800):
             who = c.get("user") or {}
             ts = parse_ts(c.get(field))
             if not ts or who.get("type") == "Bot":
                 continue
-            (mine if who.get("login") == login else theirs).append(ts)
+            if who.get("login") == login:
+                mine.append(ts)
+                continue
+            entry = {"author": who.get("login"), "kind": kind, "at": c.get(field),
+                     "body": (c.get("body") or "")[:2000], "url": c.get("html_url")}
+            if kind == "inline":
+                entry["path"] = c.get("path")
+                entry["line"] = c.get("line") or c.get("original_line")
+            if kind == "review":
+                entry["state"] = c.get("state")
+            theirs.append((ts, entry))
     for c in gh.paginate(f"repos/{repo}/pulls/{number}/commits", max_items=250, ttl=1800):
         ts = parse_ts(((c.get("commit") or {}).get("committer") or {}).get("date"))
         if ts:
             mine.append(ts)
-    return bool(theirs) and (not mine or max(theirs) > max(mine))
+    last_mine = max(mine, default=None)
+    unanswered = sorted((t for t in theirs if last_mine is None or t[0] > last_mine), key=lambda t: t[0])
+    # an empty approval or comment-only review shell asks nothing of you
+    needs_reply = [e for _, e in unanswered if e["body"].strip() or e.get("state") == "CHANGES_REQUESTED"]
+    return bool(needs_reply), [e for e in needs_reply if e["body"].strip()][-MAX_REVIEW_COMMENTS:]
+
+
+def waiting_on_you(gh: GitHub, repo: str, number: int, login: str) -> bool:
+    """True when the latest human word on the PR is someone else's."""
+    return review_state(gh, repo, number, login)[0]
 
 
 def collect(gh: GitHub, login: str) -> dict:
@@ -69,7 +96,9 @@ def collect(gh: GitHub, login: str) -> dict:
             "body": (it.get("body") or "")[:2000],
         }
         if status == "open":
-            pr["waiting_on_you"] = waiting_on_you(gh, repo, it["number"], login)
+            pr["waiting_on_you"], comments = review_state(gh, repo, it["number"], login)
+            if comments:
+                pr["review_comments"] = comments
         prs.append(pr)
 
     reviews = [{"repo": _repo_of(it), "number": it["number"], "title": it["title"],
@@ -113,17 +142,22 @@ def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_
     now = now or datetime.now(timezone.utc)
     commented = set(contributions.get("commented_issues", []))
     for key, s in state.get("suggestions", {}).items():
-        if s.get("status") not in ACTIVE:
+        old = s.get("status")
+        if old not in ACTIVE:
             continue
         repo, number = s["repo"], s["number"]
+        pr_kind = s.get("kind", "pr") == "pr"
         linked = [p for p in contributions["prs"] if p["repo"] == repo and _mentions(p, repo, number)]
-        old = s.get("status")
-        if linked:
+        if linked and pr_kind:
             pr = max(linked, key=lambda p: p["created_at"])
             s["pr_url"] = pr["url"]
             s["status"] = {"merged": "merged", "closed": "closed"}.get(
                 pr["status"], "waiting_on_you" if pr.get("waiting_on_you") else "pr_open")
-        elif key in commented:
+        elif old in PENDING and not pr_kind and key in commented:
+            s["status"] = "posted"
+        elif old in ("approved", "submitting") or (old in ("pr_open", "waiting_on_you") and s.get("submitted_at")):
+            pass  # in flight (or just opened, not indexed yet): only a PR or a posted comment moves it
+        elif key in commented and old != "ready":
             s["status"] = "claimed"
         else:
             issue = gh.get(f"repos/{repo}/issues/{number}", ttl=3 * 3600)

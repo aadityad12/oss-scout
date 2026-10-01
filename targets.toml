@@ -6,13 +6,17 @@
 
 [user]
 login = "aadityad12"
+name = "Aaditya Desai"   # the author name on commits made for you
 # Languages you read comfortably. Anything else still shows up, ranked lower.
 strong_languages = ["C++", "C", "Python"]
 familiar_languages = ["Kotlin", "Java"]
 
 [settings]
 max_candidates = 10          # how many go to the Claude step each night
-max_picks = 3                # Claude drafts at most this many (0 is fine)
+max_picks = 3                # Claude prepares at most this many a night (0 is fine)
+max_ready = 1                # ...of which at most this many fully prepared for one-tap submit
+max_open_prs = 3             # no new ready PR while this many of your PRs are open
+max_open_prs_per_repo = 1    # ...or while this many are open in that repo (briefings still fine)
 max_per_repo_wide = 2        # candidates per repo while exploring widely
 max_per_repo = 4             # ...and after home projects are chosen
 repo_score_ttl_days = 7      # re-measure repo friendliness weekly
@@ -23,6 +27,11 @@ skip_after_days = 14         # untouched suggestions become "skipped"
 pass_cooldown_days = 60      # issues the Claude step turned down stay out this long
 # "Let the data decide": go wide until this date, then recommend home projects.
 wide_phase_until = "2026-10-18"
+
+[submit]
+# Date the GitHub token used to submit approved work was created. Rotate the
+# classic PAT every 90 days and update this; the digest warns after 80.
+token_rotated = "2026-10-01"
 
 [discovery]
 enabled = true

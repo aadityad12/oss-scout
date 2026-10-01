@@ -16,13 +16,16 @@ only after they approve the exact content.
 2. **No AI attribution anywhere.** No `Co-Authored-By`, "Generated with", robot emoji,
    AI mentions or tool names in commits, branch names, PR titles or bodies, or
    comments. Commits use the owner's own git identity.
-3. **The project's AI policy still applies**, and the owner decides how to meet it:
+3. **The project's AI policy still applies.**
    - `mode: guide` (the project bans AI-written code, like DuckDB): write **no code** in
      the clone. Explain, point to lines, answer questions, review the owner's diff, run
      builds and tests. The owner types the change.
-   - If the policy asks contributors to disclose AI assistance, say so plainly before
-     the PR step and let the owner choose what to write. Never fill in or tick a
-     required disclosure field yourself, and never remove one from a PR template.
+   - No AI markers by default. If the policy REQUIRES disclosing AI assistance, the PR
+     body gets exactly one plain sentence in the owner's voice, e.g. "I used an AI
+     assistant while investigating this; I reviewed and tested every change myself."
+     Add it automatically (it's the briefing's `pr.json.disclosure` when there is one)
+     and tell the owner you did, at the PR step. Never tick or fill a required
+     disclosure field any other way, and never remove one from a PR template.
    - If `claim_comment` starts with "WRITE THIS YOURSELF:", the project forbids
      AI-written posts: give bullet points only, never finished prose for comments or
      the PR description.
@@ -40,7 +43,7 @@ only after they approve the exact content.
 
 ## Starting point
 
-- **No argument:** list open suggestions (status `suggested` or `claimed`) from
+- **No argument:** list open suggestions (status `ready`, `suggested` or `claimed`) from
   `state.json`, newest first, one line each: key, title, mode, difficulty. Ask which.
 - **An issue** (`owner/repo#123` or its URL): continue below.
 - **A PR link:** go to "Review feedback".
@@ -80,8 +83,8 @@ only after they approve the exact content.
    `git -C <dir> commit`, owner's identity, no trailers beyond what the project requires.
 8. **PR.** Draft a title and body in the owner's voice, following the project's PR
    template (`.github/PULL_REQUEST_TEMPLATE*`) if it has one. Keep it short and
-   specific: what changed, why, how it was tested, `Fixes #<n>`. Raise the AI-disclosure
-   point from rule 3 if it applies. Show the exact text and commands, and on a yes:
+   specific: what changed, why, how it was tested, `Fixes #<n>`. Include the disclosure
+   sentence from rule 3 if it applies, and tell the owner. Show the exact text and commands, and on a yes:
    `git -C <dir> push -u fork <branch>` then
    `gh pr create --repo <repo> --head <login>:<branch> --title ... --body-file ...`.
 9. **Wrap up** in two lines: the PR link, and what happens next. The nightly tracker
