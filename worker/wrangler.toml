@@ -19,8 +19,8 @@ DATA_REF = "claude/scout-data"
 DASHBOARD_URL = "https://me.aadityad.dev"
 # From the Access app you create in worker/README.md step 1. Until both are filled
 # in, every request is refused.
-ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
-ACCESS_AUD = "REPLACE-WITH-THE-APPLICATION-AUD-TAG"
+ACCESS_TEAM_DOMAIN = "aadityad.cloudflareaccess.com"
+ACCESS_AUD = "43775c999d7a508bc4457d73716e19e2f644a1ef0c53749e0bc2a82c684156f6"
 # MAIL_FROM = "OSS Scout <scout@aadityad.dev>"   # default; change if you use another sender
 
 # Secrets (never put these here), set with `npx wrangler secret put <NAME>`:
