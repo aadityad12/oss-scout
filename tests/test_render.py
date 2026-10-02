@@ -310,7 +310,7 @@ def test_render_embeds_data_safely(tmp_path, monkeypatch):
     monkeypatch.setenv("SUBMIT_TOKEN", "ghp_secret_sentinel")
     html = render.render(config.load(), data, st).read_text()
     assert "/*__SCOUT_DATA__*/null" not in html
-    assert html.lower().count("</script") == 3                   # the template's own three tags, nothing from strangers
+    assert html.lower().count("</script") == 4                   # the template's own four tags (theme, marked, purify, app), nothing from strangers
     assert "ghp_secret_sentinel" not in html
     payload = embedded(html)
     assert "</script><script>alert(1)" in json.dumps(payload)    # the text survives, just not as markup
