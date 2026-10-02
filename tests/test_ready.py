@@ -175,6 +175,37 @@ def test_ingest_makes_valid_ready_items_ready(tmp_path):
     assert s["o/r#7"]["history"][0]["to"] == "ready"
 
 
+def test_ingest_clears_the_request_when_a_suggestion_becomes_ready(tmp_path):
+    write(tmp_path, good_briefing("o/r#7"), PR_JSON)
+    write(tmp_path, good_briefing("o/r#8"))
+    state = statemod.load(tmp_path)
+    briefings.ingest(tmp_path, state)
+    for k in ("o/r#7", "o/r#8"):
+        state["suggestions"][k]["prepare_requested_at"] = "2026-10-02T08:00:00+00:00"
+    assert briefings.ingest(tmp_path, state) == 0
+    assert state["suggestions"]["o/r#7"]["status"] == "suggested"  # not ready yet: the request stands
+    write(tmp_path, good_briefing("o/r#7", ready=True), PR_JSON)
+    briefings.ingest(tmp_path, state)
+    s = state["suggestions"]["o/r#7"]
+    assert s["status"] == "ready" and "prepare_requested_at" not in s
+    assert s["history"][-1]["from"] == "suggested" and s["history"][-1]["to"] == "ready"
+    assert state["suggestions"]["o/r#8"]["prepare_requested_at"]
+    write(tmp_path, good_briefing("o/r#8", ready=True, kind="review", post_target="https://github.com/o/r/pull/8"),
+          post="Looks right.")
+    briefings.ingest(tmp_path, state)
+    s = state["suggestions"]["o/r#8"]
+    assert (s["status"], s["kind"], s["post_target"]) == ("ready", "review", "https://github.com/o/r/pull/8")
+
+
+def test_requested_lists_suggestions_oldest_request_first():
+    sugg = {"o/r#1": {"status": "suggested", "prepare_requested_at": "2026-10-02T09:00:00+00:00"},
+            "o/r#2": {"status": "suggested", "prepare_requested_at": "2026-10-01T09:00:00+00:00"},
+            "o/r#3": {"status": "suggested"},
+            "o/r#4": {"status": "ready", "prepare_requested_at": "2026-09-01T09:00:00+00:00"}}
+    assert wip.requested({"suggestions": sugg}) == ["o/r#2", "o/r#1"]
+    assert wip.requested({"suggestions": {}}) == []
+
+
 def test_ingest_leaves_broken_briefings_out(tmp_path):
     b = good_briefing("o/r#7", ready=True)
     del b["summary"]
@@ -265,14 +296,27 @@ def test_digest_lists_ready_waiting_and_new(tmp_path):
     d = digest.build(config.load(), tmp_path, dstate(suggestions=suggestions,
                                                      contributions={"prs": prs}), NOW)
     assert d["send"] is True
-    assert d["ready"] == [{"key": "o/r#1", "title": "A", "kind": "repro"}]
-    assert d["new_briefings"] == [{"key": "o/r#2", "title": "B", "kind": "pr"},
-                                  {"key": "o/r#3", "title": "C", "kind": "pr"}]
+    assert d["ready"] == [{"key": "o/r#1", "title": "A", "kind": "repro", "slug": "o__r__1"}]
+    assert d["new_briefings"] == [{"key": "o/r#2", "title": "B", "kind": "pr", "slug": "o__r__2"},
+                                  {"key": "o/r#3", "title": "C", "kind": "pr", "slug": "o__r__3"}]
     assert d["waiting_on_you"] == [
-        {"key": "o/r#5", "pr_url": "https://github.com/o/r/pull/5", "since": "2026-09-30T09:00:00Z",
-         "overdue": True},
-        {"key": "x/y#6", "pr_url": "https://github.com/x/y/pull/6", "since": "2026-10-02T09:00:00Z",
-         "overdue": False}]
+        {"key": "o/r#5", "slug": "o__r__5", "pr_url": "https://github.com/o/r/pull/5",
+         "since": "2026-09-30T09:00:00Z", "overdue": True},
+        {"key": "x/y#6", "slug": "x__y__6", "pr_url": "https://github.com/x/y/pull/6",
+         "since": "2026-10-02T09:00:00Z", "overdue": False}]
+    assert d["pairing"] == []
+
+
+def test_digest_lists_pairing_items_without_sending(tmp_path):
+    suggestions = {
+        "o/r#2": {"status": "suggested", "title": "B", "pairing": True, "suggested_at": "2026-09-01T00:00:00+00:00"},
+        "o/r#1": {"status": "approved", "title": "A", "pairing": True},
+        "o/r#3": {"status": "suggested", "title": "C", "suggested_at": "2026-09-01T00:00:00+00:00"},
+    }
+    d = digest.build(config.load(), tmp_path, dstate(suggestions=suggestions), NOW)
+    assert d["pairing"] == [{"key": "o/r#1", "title": "A", "slug": "o__r__1"},
+                            {"key": "o/r#2", "title": "B", "slug": "o__r__2"}]
+    assert d["send"] is False
 
 
 def test_digest_send_rules(tmp_path):
@@ -308,3 +352,13 @@ def test_init_installs_both_agents(tmp_path):
     summarizer = (tmp_path / ".claude/agents/thread-summarizer.md").read_text()
     assert "model: opus" in analyst and "at most once per pick" in analyst
     assert "model: haiku" in summarizer and "tools: Read, Grep, Glob, Bash" in summarizer
+
+
+def test_digest_pairing_lists_only_active_items(tmp_path):
+    st = statemod.load(tmp_path)
+    st["suggestions"] = {
+        "o/r#1": {"status": "suggested", "pairing": True, "title": "a"},
+        "o/r#2": {"status": "pr_open", "pairing": True, "title": "b"},
+        "o/r#3": {"status": "skipped", "pairing": True, "title": "c"},
+    }
+    assert [p["key"] for p in digest.build(config.load(), tmp_path, st, NOW)["pairing"]] == ["o/r#1"]

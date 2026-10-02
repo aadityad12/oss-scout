@@ -107,6 +107,16 @@ h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: -.01em; tex
 .meter i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* featured */
+.featured { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.feature { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--merged); border-radius: 14px; padding: 20px 22px; display: grid; gap: 12px; align-content: start; box-shadow: var(--shadow); }
+.feature .top { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.feature .repo { font: 400 12px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.feature h3 { font: 600 21px/1.3 var(--display); overflow-wrap: anywhere; }
+.feature .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: var(--muted); }
+.feature .go { font-size: 14px; font-weight: 500; text-decoration: none; justify-self: start; }
+.feature .go:hover { text-decoration: underline; }
+
 /* pull requests */
 .list { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 .pr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 16px 20px; border-top: 1px solid var(--line); align-items: start; }
@@ -209,6 +219,17 @@ function prRow(p) {
   </article>`;
 }
 
+function featureCard(p, info) {
+  const chips = [info.language && `<span class="chip">${esc(info.language)}</span>`,
+                 info.stars != null && `<span class="chip">&#9733; ${esc(fmtStars(info.stars))}</span>`].filter(Boolean).join("");
+  return `<article class="feature">
+    <div class="top"><span class="repo">${esc(p.repo)} #${esc(p.number)}</span><span class="badge b-merged">Merged</span></div>
+    <h3>${esc(p.summary || p.title)}</h3>
+    <div class="meta"><span>Merged ${esc(fmtDate(p.merged_at))}</span>${chips}</div>
+    <a class="go" href="${esc(safeUrl(p.url))}" target="_blank" rel="noopener">View pull request on GitHub &rarr;</a>
+  </article>`;
+}
+
 function projectCard(p, max) {
   const chips = [p.language && `<span class="chip">${esc(p.language)}</span>`,
                  p.stars != null && `<span class="chip">&#9733; ${esc(fmtStars(p.stars))}</span>`,
@@ -261,8 +282,8 @@ function boot() {
   $("#gh-foot").href = gh;
   $("#updated").textContent = `Updated ${fmtDate(DATA.generated_at)}`;
 
-  const prs = DATA.prs || [];
-  if (!prs.length) { main.innerHTML = renderEmpty(); return; }
+  const prs = DATA.prs || [], featured = DATA.featured || [];
+  if (!prs.length && !featured.length) { main.innerHTML = renderEmpty(); return; }
 
   const reviews = DATA.reviews || [], issues = DATA.issues || [];
   const projects = DATA.projects || [];
@@ -281,11 +302,20 @@ function boot() {
     <div class="stat"><b>${esc(DATA.open_prs)}</b><span>open, in review</span></div>
   </div>${secondary ? `<p class="stats-note">Also: ${secondary}</p>` : ""}</section>`;
 
+  if (featured.length) {
+    const byRepo = Object.fromEntries((DATA.projects || []).map(p => [p.repo, p]));
+    html += `<section aria-labelledby="t-featured"><div class="section-title"><h2 id="t-featured">Featured</h2><span>a few that show what I do</span></div>
+      <div class="featured">${featured.map(p => featureCard(p, byRepo[p.repo] || {})).join("")}</div></section>`;
+  }
+
   html += `<section aria-labelledby="t-projects"><div class="section-title"><h2 id="t-projects">Projects</h2><span>ordered by merged pull requests</span></div>
     <div class="projects">${projects.map(p => projectCard(p, Math.max(1, ...projects.map(x => x.merged)))).join("")}</div></section>`;
 
-  html += `<section aria-labelledby="t-prs"><div class="section-title"><h2 id="t-prs">Pull requests</h2><span>${plural(sorted.length, "pull request")}</span></div>
+  // featured PRs are shown above and left out of this list, so nothing appears twice
+  if (sorted.length) {
+    html += `<section aria-labelledby="t-prs"><div class="section-title"><h2 id="t-prs">${featured.length ? "More pull requests" : "Pull requests"}</h2><span>${plural(sorted.length, "pull request")}</span></div>
     <div class="list" id="prs">${sorted.slice(0, INITIAL_PRS).map(prRow).join("")}${sorted.length > INITIAL_PRS ? `<button class="more" id="more" type="button">Show all ${sorted.length}</button>` : ""}</div></section>`;
+  }
 
   const act = DATA.activity;
   if (act && (act.weeks || []).some(w => w.n)) {

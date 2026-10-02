@@ -17,6 +17,13 @@ def snoozed(s: dict, now: datetime | None = None) -> bool:
     return bool(until and until > (now or datetime.now(timezone.utc)))
 
 
+def requested(state: dict) -> list[str]:
+    """Suggestions you asked to have prepared, oldest request first."""
+    asked = [(s["prepare_requested_at"], k) for k, s in state.get("suggestions", {}).items()
+             if s.get("prepare_requested_at") and s.get("status") == "suggested"]
+    return [k for _, k in sorted(asked)]
+
+
 def compute(state: dict, settings: dict, now: datetime | None = None) -> dict:
     max_ready = settings.get("max_ready", 1)
     max_open = settings.get("max_open_prs", 3)

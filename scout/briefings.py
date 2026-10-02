@@ -188,13 +188,19 @@ def ingest(data: Path, state: dict) -> int:
         # a briefing that claims "ready" but isn't fully prepared still counts, as a plain suggestion
         if b["_problems"] and validate({**b, "ready": False}, data / b["_dir"]):
             continue
+        status = "ready" if b.get("ready") is True and not b["_problems"] else "suggested"
         if b["key"] in state["suggestions"]:
+            s = state["suggestions"][b["key"]]
             fu = b["_followup"]
             if fu and not fu["problems"]:
-                s = state["suggestions"][b["key"]]
                 s["followup"], s["followup_kind"] = fu["dir"], fu["kind"]
+            if status == "ready" and s["status"] == "suggested":
+                s.update(status="ready", kind=b.get("kind", "pr"))
+                s.setdefault("history", []).append({"at": now, "from": "suggested", "to": "ready"})
+                s.pop("prepare_requested_at", None)
+                if b.get("post_target"):
+                    s["post_target"] = b["post_target"]
             continue
-        status = "ready" if b.get("ready") is True and not b["_problems"] else "suggested"
         s = state["suggestions"][b["key"]] = {
             "repo": b["repo"], "number": b["number"], "title": b["title"], "url": b["url"],
             "status": status, "suggested_at": b.get("picked_at", now),

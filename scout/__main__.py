@@ -1,7 +1,7 @@
 """oss-scout command line.
 
   python -m scout run            scan, score, filter, track -> data/candidates.json
-  python -m scout track          only refresh your contribution history
+  python -m scout track          refresh your contribution history, note new reviews waiting on you
   python -m scout ingest         record briefings written by the Claude step as suggestions
   python -m scout digest         write data/digest.json (what needs you today)
   python -m scout render         build data/dashboard.html
@@ -22,11 +22,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, discover, filters, rank, score, state as statemod, track, wip
+from .act import ACTIONS
 from .github import GitHub, RateLimited
 
 
 def log(msg: str) -> None:
     print(f"[scout] {msg}", file=sys.stderr, flush=True)
+
+
+def output(name: str, value: str) -> None:
+    """A step output for the workflow, or just printed when run by hand."""
+    if path := os.environ.get("GITHUB_OUTPUT"):
+        with open(path, "a") as f:
+            f.write(f"{name}={value}\n")
+    else:
+        print(f"{name}={value}")
 
 
 def cmd_run(args, cfg, data, gh) -> None:
@@ -38,6 +48,7 @@ def cmd_run(args, cfg, data, gh) -> None:
     try:
         st["contributions"] = track.collect(gh, cfg.login)
         track.update_suggestions(gh, st, st["contributions"], s.get("skip_after_days", 14))
+        track.alert(st, data)  # the routine runs right after this scan, so no extra run is started
     except RateLimited as e:
         log(f"tracking skipped, keeping previous history: {e}")
 
@@ -107,6 +118,7 @@ def cmd_run(args, cfg, data, gh) -> None:
         "max_picks": s.get("max_picks", 3),
         "max_ready": s.get("max_ready", 1),
         "wip": wip.compute(st, s),
+        "requested": wip.requested(st),
         "candidates": final,
     })
     st["runs"].append({"at": now, "raw": len(issues), "eligible": len(scored),
@@ -124,8 +136,10 @@ def cmd_track(args, cfg, data, gh) -> None:
     st = statemod.load(data)
     st["contributions"] = track.collect(gh, cfg.login)
     track.update_suggestions(gh, st, st["contributions"], cfg.settings.get("skip_after_days", 14))
+    fire = track.extra_draft(st, track.alert(st, data))
     statemod.save(data, st)
     print(json.dumps(st["contributions"]["per_repo"], indent=2))
+    output("fire", str(fire).lower())
 
 
 def cmd_ingest(args, cfg, data, gh) -> None:
@@ -163,7 +177,7 @@ def cmd_init_data(args, cfg, data, gh) -> None:
     from .datarepo import init
     for f in init(data, cfg.login):
         log(f"wrote {data / f}")
-    log("commit .github/workflows/act.yml to the data repo's default branch (main): "
+    log("commit .github/workflows/act.yml and track.yml to the data repo's default branch (main): "
         "workflow_dispatch only finds workflows there. The data itself stays on claude/scout-data.")
 
 
@@ -191,7 +205,7 @@ def main(argv: list[str] | None = None) -> None:
         sub.add_parser(name)
     ac = sub.add_parser("act")
     ac.add_argument("--key", required=True, help="owner/repo#123")
-    ac.add_argument("--action", required=True, choices=["submit", "post", "followup", "approve", "later", "skip"])
+    ac.add_argument("--action", required=True, choices=ACTIONS)
     ac.add_argument("--title", default=None, help="edited PR title (or commit message for a follow-up)")
     ac.add_argument("--body-file", default=None, help="file with the edited PR body or comment")
     ac.add_argument("--dry-run", action="store_true", help="run the checks and print the plan; write nothing")

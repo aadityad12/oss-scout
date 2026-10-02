@@ -12,6 +12,12 @@ failure. Nothing here runs unless the owner pressed the button.
   approve   ready -> approved
   later     snooze a ready item for three days
   skip      turn the item down for good
+  prepare   ask the next nightly run to prepare this suggestion
+  pair      mark an item to work on together in a /contribute session (unpair undoes it)
+  feature   show a merged PR first on the public page (unfeature undoes it)
+  summary   set the one-line summary of a PR on the public page (empty text removes it)
+
+None of the last four touch GitHub.
 """
 
 from __future__ import annotations
@@ -33,11 +39,13 @@ from .config import Config
 from .github import GitHub, NotFound
 from .score import parse_ts
 
-ACTIONS = ("submit", "post", "followup", "approve", "later", "skip")
+ACTIONS = ("submit", "post", "followup", "approve", "later", "skip",
+           "prepare", "pair", "unpair", "feature", "unfeature", "summary")
 KEY = re.compile(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)$")
 TARGET = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(issues|pull)/([0-9]+)$")
 REF = re.compile(r"^[A-Za-z0-9._/-]+$")
 MAX_TITLE, MAX_BODY, SNOOZE_DAYS, KEEP_ACTIONS = 256, 60000, 3, 200
+MAX_FEATURED, MAX_SUMMARY = 3, 200
 STUCK_MINUTES = 30  # a "submitting" item older than this is a job that died; retrying is safe
 PENDING = ("ready", "approved")
 FOLLOWUP_MESSAGE = "Address review feedback"
@@ -111,6 +119,21 @@ class Job:
         if (str(s.get("repo")).lower(), s.get("number")) != (self.repo.lower(), self.number):
             fail("the suggestion's repo does not match the key")
         return s
+
+    def pr(self, *statuses: str) -> dict:
+        """One of the owner's PRs from the last scan, matched by repo and number."""
+        for p in self.st.get("contributions", {}).get("prs", []):
+            if str(p.get("repo")).lower() == self.repo.lower() and p.get("number") == self.number:
+                if statuses and p.get("status") not in statuses:
+                    fail(f"the pull request is {p.get('status')}, this needs {' or '.join(statuses)}")
+                return p
+        fail(f"no pull request of yours for {self.key}")
+
+    def public(self) -> dict:
+        pub = self.st.setdefault("public", {})
+        pub.setdefault("featured", [])
+        pub.setdefault("summaries", {})
+        return pub
 
     def move(self, s: dict, status: str) -> None:
         if s["status"] != status:
@@ -436,7 +459,60 @@ def skip(job: Job) -> dict:
     return {}
 
 
-HANDLERS = {"submit": submit, "post": post, "followup": followup, "approve": approve, "later": later, "skip": skip}
+def prepare(job: Job) -> dict:
+    job.suggestion(("suggested",))["prepare_requested_at"] = job.stamp
+    return {}
+
+
+def pair(job: Job) -> dict:
+    s = job.suggestion(("suggested",) + PENDING)
+    s["pairing"], s["pairing_at"] = True, job.stamp
+    return {}
+
+
+def unpair(job: Job) -> dict:
+    s = job.st["suggestions"].get(job.key) or fail(f"no suggestion for {job.key}")
+    s.pop("pairing", None)
+    s.pop("pairing_at", None)
+    return {}
+
+
+def feature(job: Job) -> dict:
+    url = job.pr("merged")["url"]
+    featured = job.public()["featured"]
+    if url not in featured:
+        if len(featured) >= MAX_FEATURED:
+            fail(f"{MAX_FEATURED} pull requests are already featured: unfeature one first")
+        featured.append(url)
+    return {}
+
+
+def unfeature(job: Job) -> dict:
+    url = job.pr()["url"]
+    featured = job.public()["featured"]
+    if url in featured:
+        featured.remove(url)
+    return {}
+
+
+def summary(job: Job) -> dict:
+    text = (job.body or "").strip()  # no text at all clears it, the same as empty text
+    summaries = job.public()["summaries"]
+    if not text:
+        summaries.pop(job.pr()["url"], None)
+        return {}
+    pr = job.pr("merged", "open")
+    if len(text) > MAX_SUMMARY or len(text.splitlines()) > 1:
+        fail(f"the summary must be one line, 1-{MAX_SUMMARY} characters")
+    if briefings.has_ai_marker(text):
+        fail("the text contains an AI marker")
+    summaries[pr["url"]] = text
+    return {}
+
+
+HANDLERS = {"submit": submit, "post": post, "followup": followup, "approve": approve, "later": later, "skip": skip,
+            "prepare": prepare, "pair": pair, "unpair": unpair, "feature": feature, "unfeature": unfeature,
+            "summary": summary}
 
 
 def run(cfg: Config, data: Path, key: str, action: str, title: str | None = None,
