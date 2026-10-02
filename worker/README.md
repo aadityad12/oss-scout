@@ -54,7 +54,9 @@ npx wrangler secret put RESEND_API_KEY   # from step 5
 
 ### 5. Set up email with Resend
 
-1. Sign up at resend.com, **API Keys**, **Create API Key** (sending access only). Copy it for step 4.
+1. Sign up at resend.com, **API Keys**, **Create API Key**. Name `oss-scout`, permission
+   **Sending access**, domain **All domains** (the only choice before a domain is added; the
+   key can only send, and the Worker only ever emails you). Copy it (starts with `re_`) for step 4.
 2. **Domains**, **Add Domain**, `aadityad.dev`. Add the DNS records Resend shows (Cloudflare DNS tab) and click **Verify**. Emails then send from `OSS Scout <scout@aadityad.dev>`.
 3. No domain yet? Add `MAIL_FROM = "OSS Scout <onboarding@resend.dev>"` under `[vars]` in `wrangler.toml` and redeploy. That sender can only email the address you signed up to Resend with, which is enough for one person.
 
