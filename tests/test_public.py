@@ -76,6 +76,97 @@ def test_build_payload_uses_summary_when_present(tmp_path):
     assert by_number[1]["summary"] == "Stops a crash on empty input"
     assert by_number[2]["summary"] is None
 
+# -- featured PRs and plain-language summaries --------------------------------------
+
+def url(repo, number):
+    return f"https://github.com/{repo}/pull/{number}"
+
+
+def test_summary_override_beats_contributions_summary_and_falls_back(tmp_path):
+    st = sample(tmp_path)  # PR 1 has its own summary, PR 2 has none
+    st["public"] = {"summaries": {url("duckdb/duckdb", 1): "  Fixed a crash on empty input  ",
+                                  url("duckdb/duckdb", 2): "Sped up parsing",
+                                  url("o/r", 4): "   ",         # empty: ignored
+                                  url("x/y", 6): 42}}           # not a string: ignored
+    by = {x["number"]: x for x in public.build_payload(config.load(), st, None, NOW)["prs"]}
+    assert by[1]["summary"] == "Fixed a crash on empty input"
+    assert by[2]["summary"] == "Sped up parsing"
+    assert by[4]["summary"] is None and by[6]["summary"] is None
+
+
+def test_blank_override_keeps_existing_summary(tmp_path):
+    st = sample(tmp_path)
+    st["public"] = {"summaries": {url("duckdb/duckdb", 1): " ", "not-a-pr": "x"}}
+    by = {x["number"]: x for x in public.build_payload(config.load(), st, None, NOW)["prs"]}
+    assert by[1]["summary"] == "Stops a crash on empty input"
+
+
+def many(tmp_path):
+    return state_with(tmp_path, prs=[
+        pr("a/a", 1, merged="2026-09-01T10:00:00Z"), pr("b/b", 2, merged="2026-09-02T10:00:00Z"),
+        pr("c/c", 3, merged="2026-09-03T10:00:00Z"), pr("d/d", 4, merged="2026-09-04T10:00:00Z"),
+        pr("e/e", 5, status="open", created="2026-09-05T10:00:00Z", merged=None)])
+
+
+def test_featured_keeps_given_order_and_caps_at_three(tmp_path):
+    st = many(tmp_path)
+    st["public"] = {"featured": [url("c/c", 3), url("a/a", 1), url("d/d", 4), url("b/b", 2)]}
+    p = public.build_payload(config.load(), st, None, NOW)
+    assert [x["url"] for x in p["featured"]] == [url("c/c", 3), url("a/a", 1), url("d/d", 4)]
+    assert [x["number"] for x in p["prs"]] == [2, 5]
+
+
+def test_featured_skips_unknown_unmerged_repeated_and_junk(tmp_path):
+    st = many(tmp_path)
+    st["public"] = {"featured": [url("nope/nope", 9), url("e/e", 5), url("b/b", 2), url("b/b", 2),
+                                 None, 7, url("a/a", 1)]}
+    p = public.build_payload(config.load(), st, None, NOW)
+    assert [x["number"] for x in p["featured"]] == [2, 1]
+    assert 5 in [x["number"] for x in p["prs"]]  # the open PR stays in the list
+
+
+def test_featured_missing_or_malformed_is_empty(tmp_path):
+    for bad in (None, {}, [], "x", {"featured": "x"}, {"featured": None}, {"summaries": []}):
+        st = many(tmp_path)
+        if bad is not None:
+            st["public"] = bad
+        p = public.build_payload(config.load(), st, None, NOW)
+        assert p["featured"] == [] and len(p["prs"]) == 5, bad
+
+
+def test_featured_pr_carries_its_summary_and_is_not_duplicated(tmp_path):
+    st = many(tmp_path)
+    st["public"] = {"featured": [url("a/a", 1), url("b/b", 2)],
+                    "summaries": {url("a/a", 1): "Fixed a thing in A"}}
+    p = public.build_payload(config.load(), st, None, NOW)
+    assert p["featured"][0]["summary"] == "Fixed a thing in A"
+    assert p["featured"][1]["summary"] is None
+    featured_urls = {x["url"] for x in p["featured"]}
+    assert not featured_urls & {x["url"] for x in p["prs"]}
+    assert len(p["featured"]) + len(p["prs"]) == 5
+
+
+def test_counts_projects_activity_and_stats_include_featured(tmp_path):
+    plain = public.build_payload(config.load(), many(tmp_path), "oss.example.dev", NOW)
+    st = many(tmp_path)
+    st["public"] = {"featured": [url("a/a", 1), url("b/b", 2), url("c/c", 3)]}
+    feat = public.build_payload(config.load(), st, "oss.example.dev", NOW)
+    assert (feat["merged_prs"], feat["open_prs"]) == (4, 1) == (plain["merged_prs"], plain["open_prs"])
+    assert feat["projects"] == plain["projects"] and len(feat["projects"]) == 5
+    assert feat["activity"] == plain["activity"]
+    assert public.build_stats(feat) == public.build_stats(plain)
+    assert set(public.build_stats(feat)) == {"generated_at", "merged_prs", "open_prs", "projects",
+                                             "top_projects", "url"}
+    assert public.description(feat) == public.description(plain)
+
+
+def test_render_with_only_featured_prs_still_has_data(tmp_path):
+    st = state_with(tmp_path, prs=[pr("a/a", 1)])
+    st["public"] = {"featured": [url("a/a", 1)]}
+    html = public.render(config.load(), st, tmp_path / "site").read_text()
+    data = json.loads(html.split("const DATA = ")[1].split(";\n")[0])
+    assert data["prs"] == [] and len(data["featured"]) == 1 and data["merged_prs"] == 1
+
 
 def test_activity_weeks_and_streak(tmp_path):
     st = state_with(tmp_path, prs=[
@@ -171,13 +262,33 @@ def test_render_never_leaks_private_data(tmp_path):
         "submit_steps": ["LEAK_STEP"], "ai_disclosure": "LEAK_DISCLOSURE", "mode": "draft"}))
     (bdir / "draft.patch").write_text("+LEAK_PATCH\n")
     (tmp_path / "candidates.json").write_text(json.dumps([{"key": "o/r#7", "title": "LEAK_CANDIDATE"}]))
+    # every other private suggestion field, and briefing files beside the first one
+    st["suggestions"]["o/r#7"].update({
+        "reason": "LEAK_REASON", "why": "LEAK_WHY", "score": 987.123, "note": "LEAK_NOTE",
+        "claim_comment": "LEAK_SUGGESTION_CLAIM", "pr_title": "LEAK_SUGGESTION_PR_TITLE",
+        "history": [{"at": "2026-09-21T00:00:00+00:00", "from": "suggested", "to": "LEAK_HISTORY"}]})
+    st["suggestions"]["o/r#8"] = {"repo": "o/r", "number": 8, "title": "LEAK_SECOND_SUGGESTION",
+                                  "status": "ready", "url": "https://github.com/o/r/issues/8"}
+    (bdir / "notes.md").write_text("LEAK_BRIEFING_NOTES")
+    (bdir / "research.json").write_text(json.dumps({"how_to_test": "LEAK_RESEARCH_TESTS"}))
+    other = tmp_path / "briefings" / "x-y-1"
+    other.mkdir()
+    (other / "briefing.json").write_text(json.dumps({"summary": "LEAK_OTHER_BRIEFING_SUMMARY"}))
+    (tmp_path / "research").mkdir()
+    (tmp_path / "research" / "o-r.md").write_text("LEAK_REPO_RESEARCH")
+    # public choices are published, but only for known merged PRs: a summary for an
+    # unknown url (e.g. a suggestion's own pr_url) must not surface
+    st["public"] = {"featured": [url("duckdb/duckdb", 2)],
+                    "summaries": {url("duckdb/duckdb", 2): "PUBLIC_OK_SUMMARY",
+                                  "https://github.com/o/r/pull/7": "LEAK_UNKNOWN_URL_SUMMARY"}}
 
     out = tmp_path / "site"
     public.render(config.load(), st, out, "oss.example.dev")
     combined = "\n".join(f.read_text() for f in out.iterdir())
-    for needle in ("LEAK_", "987654", "0.123456", "friendliness", "briefing", "suggestion",
+    for needle in ("LEAK_", "987654", "0.123456", "987.123", "friendliness", "briefing", "suggestion",
                    "candidate", "scout", "AI-assisted"):
         assert needle not in combined, needle
+    assert "PUBLIC_OK_SUMMARY" in combined
 
 
 # -- CLI ------------------------------------------------------------------------

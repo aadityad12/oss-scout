@@ -8,8 +8,11 @@ preview_urls = false
 routes = [{ pattern = "me.aadityad.dev", custom_domain = true }]
 
 [triggers]
-# 15:00 UTC = 8am Pacific (daylight time), 7am in winter. The daily email.
-crons = ["0 15 * * *"]
+# 15:00 UTC = 8am Pacific (daylight time), 7am in winter: the daily email.
+# Every 3 hours on the hour: start the data repo's track.yml (the review check).
+# Every 3 hours at :30: email if that check found reviewer replies (never 23:00-07:00 Pacific).
+# src/index.js matches these strings, so change them in both places.
+crons = ["0 15 * * *", "0 */3 * * *", "30 */3 * * *"]
 
 [vars]
 OWNER_LOGIN = "aadityad12"

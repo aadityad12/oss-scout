@@ -529,6 +529,134 @@ def test_tracker_leaves_freshly_submitted_prs_alone():
     assert st["suggestions"][KEY]["status"] == "pr_open"
 
 
+# -- prepare, pair, feature, summary -----------------------------------------------
+
+PR_URL = "https://github.com/o/r/pull/9"
+
+
+def with_prs(env, *statuses):
+    st = env.load()
+    st["contributions"] = {"prs": [{**open_pr("o/r", 9 + i), "status": s} for i, s in enumerate(statuses)]}
+    env.save(st)
+
+
+def test_prepare_marks_a_suggestion_only(env):
+    refused(env, env.run("prepare"), "status is ready")
+    env.set_status("suggested")
+    assert env.run("prepare") == 0
+    assert datetime.fromisoformat(env.sugg()["prepare_requested_at"])
+    assert env.load()["actions"][-1]["action"] == "prepare"
+    refused(env, env.run("prepare", key="o/r#99"), "no suggestion")
+    env.ready_ok()
+
+
+def test_pair_and_unpair(env):
+    assert env.run("pair") == 0  # ready
+    s = env.sugg()
+    assert s["pairing"] is True and datetime.fromisoformat(s["pairing_at"]) and s["status"] == "ready"
+    assert env.run("unpair") == 0
+    assert "pairing" not in env.sugg() and "pairing_at" not in env.sugg()
+    for status in ("suggested", "approved"):
+        env.set_status(status)
+        assert env.run("pair") == 0
+    env.set_status("pr_open")
+    refused(env, env.run("pair"), "status is pr_open")
+    assert env.run("unpair") == 0 and "pairing" not in env.sugg()  # unpair works whatever the status
+    refused(env, env.run("unpair", key="o/r#99"), "no suggestion")
+    env.ready_ok()
+
+
+def test_feature_needs_a_merged_pr_and_keeps_three(env):
+    with_prs(env, "merged", "merged", "merged", "merged", "open")
+    for n in (9, 10, 11):
+        assert env.run("feature", key=f"o/r#{n}") == 0
+    featured = env.load()["public"]["featured"]
+    assert featured == [f"https://github.com/o/r/pull/{n}" for n in (9, 10, 11)]
+    assert env.run("feature", key="o/r#9") == 0 and env.load()["public"]["featured"] == featured  # already there
+    refused(env, env.run("feature", key="o/r#12"), "3 pull requests are already featured")
+    assert env.load()["public"]["featured"] == featured
+    refused(env, env.run("feature", key="o/r#13"), "the pull request is open")
+    refused(env, env.run("feature", key="o/r#99"), "no pull request of yours")
+    assert env.run("unfeature", key="o/r#10") == 0
+    assert env.load()["public"]["featured"] == [featured[0], featured[2]]
+    assert env.run("feature", key="o/r#12") == 0
+    assert env.run("unfeature", key="o/r#10") == 0  # not featured: nothing to do
+    refused(env, env.run("unfeature", key="o/r#99"), "no pull request of yours")
+    env.ready_ok()
+
+
+def test_feature_matches_the_repo_as_well_as_the_number(env):
+    with_prs(env, "merged")
+    refused(env, env.run("feature", key="x/y#9"), "no pull request of yours")
+    assert env.run("feature", key="O/R#9") == 0
+
+
+def test_summary_sets_edits_and_removes(env):
+    with_prs(env, "merged", "open", "closed")
+    assert env.run("summary", key="o/r#9", body="  Fixes a crash on empty input.  \n") == 0
+    assert env.load()["public"]["summaries"] == {PR_URL: "Fixes a crash on empty input."}
+    assert env.run("summary", key="o/r#10", body="Still in review.") == 0
+    assert env.run("summary", key="o/r#9", body="Fixes the crash.") == 0
+    assert env.load()["public"]["summaries"][PR_URL] == "Fixes the crash."
+    assert env.run("summary", key="o/r#9", body="   \n") == 0
+    assert list(env.load()["public"]["summaries"]) == ["https://github.com/o/r/pull/10"]
+    assert env.run("summary", key="o/r#10") == 0  # no text at all removes it too
+    assert env.load()["public"]["summaries"] == {}
+    assert env.run("summary", key="o/r#9", body="") == 0  # nothing to remove
+    assert env.load()["actions"][-1]["result"] == "ok"
+
+
+@pytest.mark.parametrize("text,needle", [
+    ("x" * 201, "one line, 1-200"),
+    ("one\ntwo", "one line, 1-200"),
+    ("Fixes a crash. 🤖", "AI marker"),
+    ("Co-authored-by: someone", "AI marker"),
+])
+def test_summary_refusals(env, text, needle):
+    with_prs(env, "merged", "closed")
+    refused(env, env.run("summary", key="o/r#9", body=text), needle)
+    assert env.load()["public"]["summaries"] == {}
+    assert env.run("summary", key="o/r#9", body="x" * 200) == 0
+
+
+def test_summary_refusals_by_pr(env):
+    with_prs(env, "closed")
+    refused(env, env.run("summary", key="o/r#9", body="Nice."), "the pull request is closed")
+    refused(env, env.run("summary", key="o/r#99", body="Nice."), "no pull request of yours")
+    st = env.load()
+    st["public"]["summaries"][PR_URL] = "Was merged-looking."
+    env.save(st)
+    assert env.run("summary", key="o/r#9", body="") == 0  # a summary can always be removed
+    assert env.load()["public"]["summaries"] == {}
+
+
+def test_public_state_is_created_for_old_state_files(env):
+    st = env.load()
+    del st["public"]
+    st["contributions"] = {"prs": [{**open_pr("o/r", 9), "status": "merged"}]}
+    env.save(st)
+    assert statemod.load(env.data)["public"] == {"featured": [], "summaries": {}}
+    assert env.run("feature", key="o/r#9") == 0
+    st = env.load()
+    assert st["public"]["featured"] == [PR_URL] and st["alerted"] == {}
+
+
+def test_cli_accepts_the_new_actions(env, monkeypatch, tmp_path, capsys):
+    from scout import __main__ as cli
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(env.data))
+    env.set_status("suggested")
+    f = tmp_path / "t.txt"
+    f.write_text("hi")
+    for action in ("prepare", "pair", "unpair"):
+        with pytest.raises(SystemExit) as e:
+            cli.main(["act", "--key", KEY, "--action", action])
+        assert e.value.code == 0
+    assert "prepare_requested_at" in env.sugg()
+    with pytest.raises(SystemExit) as e:
+        cli.main(["act", "--key", KEY, "--action", "summary", "--body-file", str(f)])
+    assert e.value.code == 1  # no such PR, but the action is known
+
+
 # -- ghwrite ------------------------------------------------------------------
 
 def test_ghwrite_only_posts_to_the_three_endpoints(monkeypatch):
@@ -586,19 +714,48 @@ def test_act_workflow_retries_the_save_and_fails_loudly():
 
 def test_act_workflow_shape():
     y = datarepo.ACT_YML
-    assert "workflow_dispatch:" in y and "group: act" in y and "cancel-in-progress: false" in y
+    assert "workflow_dispatch:" in y and "group: data" in y and "cancel-in-progress: false" in y
     assert "contents: write" in y and "GH_TOKEN: ${{ secrets.SUBMIT_TOKEN }}" in y
     assert "ref: claude/scout-data" in y and "repository: aadityad12/oss-scout" in y
-    assert "options: [submit, post, followup, approve, later, skip]" in y
+    assert "options: [submit, post, followup, approve, later, skip, prepare, pair, unpair, feature, unfeature, summary]" in y
     assert y.count("secrets.SUBMIT_TOKEN") == 1  # only the act step gets the token
     assert "github-actions[bot]" in y and "pull -q --rebase origin claude/scout-data" in y
-    assert set(act.ACTIONS) == {"submit", "post", "followup", "approve", "later", "skip"}
+    assert set(act.ACTIONS) == {"submit", "post", "followup", "approve", "later", "skip",
+                                "prepare", "pair", "unpair", "feature", "unfeature", "summary"}
 
 
-def test_init_data_installs_the_workflow(tmp_path):
+def test_track_workflow_never_interpolates_inputs_into_scripts():
+    y = datarepo.TRACK_YML
+    blocks = run_blocks(y)
+    assert len(blocks) == 4 and any("scout track" in b for b in blocks)
+    for b in blocks:
+        assert "${{" not in b, b
+    assert "inputs" not in y and "workflow_dispatch:" in y
+
+
+def test_track_workflow_shape():
+    y = datarepo.TRACK_YML
+    assert "group: data" in y and "cancel-in-progress: false" in y and "contents: write" in y
+    assert "ref: claude/scout-data" in y and "repository: aadityad12/oss-scout" in y
+    assert "id: track" in y and "GH_TOKEN: ${{ github.token }}" in y and "SCOUT_DATA_DIR: ../data" in y
+    assert "secrets.SUBMIT_TOKEN" not in y
+    assert "python -m scout track" in y and "python -m scout digest" in y and "python -m scout render" in y
+    assert "github-actions[bot]" in y and "for attempt in 1 2 3" in y and "git rebase --abort" in y
+    assert y.index("python -m scout track") < y.index("git commit") < y.index("Start a Claude draft")
+    assert "if: steps.track.outputs.fire == 'true'" in y
+    assert "ROUTINE_FIRE_URL: ${{ secrets.ROUTINE_FIRE_URL }}" in y and "ROUTINE_TOKEN: ${{ secrets.ROUTINE_TOKEN }}" in y
+    assert "anthropic-beta: experimental-cc-routine-2026-04-01" in y and "Routine trigger not configured" in y
+    nightly = (config.ROOT / ".github/workflows/nightly.yml").read_text()
+    curl = nightly[nightly.index("curl -sS"):nightly.index("-d '{}'")]
+    assert curl in y and "datarepo" not in y
+    assert "group: data" in datarepo.ACT_YML
+
+
+def test_init_data_installs_the_workflows(tmp_path):
     written = datarepo.init(tmp_path, "me")
-    assert ".github/workflows/act.yml" in written
+    assert ".github/workflows/act.yml" in written and ".github/workflows/track.yml" in written
     assert (tmp_path / ".github/workflows/act.yml").read_text() == datarepo.ACT_YML
+    assert (tmp_path / ".github/workflows/track.yml").read_text() == datarepo.TRACK_YML
 
 
 # -- the dashboard payload ----------------------------------------------------
@@ -619,13 +776,14 @@ def test_payload_has_ready_waiting_actions_and_digest(env):
     env.save(st)
     (env.data / "digest.json").write_text(json.dumps({"token_warning": True, "token_age_days": 85}))
     payload = render.build_payload(env.cfg, env.data, st)
-    assert [r["key"] for r in payload["ready_items"]] == ["o/r#8"]
-    item = payload["ready_items"][0]
+    groups = {g["id"]: g["items"] for g in payload["inbox"]}
+    assert groups["ready"] == [] and [r["key"] for r in groups["snoozed"]] == ["o/r#8"]
+    item = groups["snoozed"][0]
     assert item["post"].startswith("Looks right") and item["kind"] == "review"
-    w = payload["waiting"][0]
+    w = groups["waiting"][0]
     assert w["key"] == KEY and w["comments"][0]["body"] == "rename x"
     assert w["followup"]["kind"] == "small" and w["followup"]["reply"] == "Renamed, thanks." and w["followup"]["patch"] == "+fix\n"
-    assert payload["actions"][0]["action"] == "skip"
+    assert payload["log"]["actions"][0]["action"] == "skip"
     assert payload["digest"]["token_warning"] is True
     html = render.render(env.cfg, env.data, st).read_text()
     assert "/api/act" in html and "</script><script>" not in html
@@ -633,7 +791,7 @@ def test_payload_has_ready_waiting_actions_and_digest(env):
 
 def test_ready_payload_carries_the_editable_files(env):
     payload = render.build_payload(env.cfg, env.data, env.load())
-    item = payload["ready_items"][0]
+    item = next(g for g in payload["inbox"] if g["id"] == "ready")["items"][0]
     assert item["pr"]["title"] == PR_JSON["title"] and item["patch"] == "+x\n" and item["problems"] == []
 
 

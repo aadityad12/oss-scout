@@ -2,10 +2,13 @@
 //
 // Serves dashboard.html from the private data repo, turns a button press into a
 // run of the data repo's act workflow (which does the GitHub writes, with its own
-// token), and sends the daily email. Cloudflare Access sits in front; this code
+// token), sends the daily email, starts the data repo's review check every 3 hours
+// and emails when a reviewer has replied. Cloudflare Access sits in front; this code
 // checks the Access token again on every request.
 
-export const ACTIONS = ["submit", "post", "followup", "approve", "later", "skip"];
+export const ACTIONS = ["submit", "post", "followup", "approve", "later", "skip", "prepare", "pair", "unpair", "feature", "unfeature", "summary"];
+const NO_TEXT_ACTIONS = ["prepare", "pair", "unpair", "feature", "unfeature"]; // these ignore title and body
+export const MAX_SUMMARY = 200; // the impact line of a PR
 export const KEY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[0-9]+$/;
 export const MAX_TITLE = 256;
 export const MAX_BODY = 60000;
@@ -13,6 +16,9 @@ const MAX_REQUEST = 200000;
 const MAX_DISPATCH_BODY = 60000; // GitHub caps all workflow inputs at 65,535 characters; the body travels as base64
 const GITHUB = "https://api.github.com";
 const CERT_TTL_MS = 60 * 60 * 1000;
+const ALERT_WINDOW_MS = 3 * 60 * 60 * 1000; // an alerts.json older than one check cycle is stale
+const QUIET_TZ = "America/Los_Angeles";
+export const CRONS = { "0 15 * * *": "digest", "0 */3 * * *": "track", "30 */3 * * *": "alerts" };
 
 const enc = new TextEncoder();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -144,6 +150,13 @@ export function parseAct(input) {
   const { key, action, title, body } = input;
   if (typeof key !== "string" || !KEY_RE.test(key)) return { error: "bad key" };
   if (!ACTIONS.includes(action)) return { error: "bad action" };
+  if (NO_TEXT_ACTIONS.includes(action)) return { key, action, inputs: { key, action, title: "", body_b64: "", dry_run: "false" } };
+  if (action === "summary") {
+    if (typeof body !== "string") return { error: "summary must be text" };
+    if (body.length > MAX_SUMMARY) return { error: `summary must be at most ${MAX_SUMMARY} characters` };
+    if (/[\r\n\u2028\u2029]/.test(body)) return { error: "summary must be a single line" };
+    return { key, action, inputs: { key, action, title: "", body_b64: body ? toBase64(body) : "", dry_run: "false" } };
+  }
   if (title != null && (typeof title !== "string" || title.length > MAX_TITLE)) return { error: `title must be at most ${MAX_TITLE} characters` };
   if (body != null && (typeof body !== "string" || body.length > MAX_BODY)) return { error: `text must be at most ${MAX_BODY} characters` };
   const body_b64 = body ? toBase64(body) : "";
@@ -207,27 +220,36 @@ export async function handle(request, env, { fetchFn = fetch, now = Date.now() }
   return text("Not found", 404);
 }
 
-// -- daily email -----------------------------------------------------------------
+// -- emails ------------------------------------------------------------------------
+
+// A link to one item on the dashboard; the page opens the item named by the hash.
+const deepLink = (env, slug) => (slug ? `${String(env.DASHBOARD_URL).replace(/\/+$/, "")}/#${encodeURIComponent(slug)}` : env.DASHBOARD_URL);
+const linked = (env, slug, inner) => (slug ? `<a href="${esc(deepLink(env, slug))}" style="color:inherit">${inner}</a>` : inner);
+const openButton = (env) =>
+  `<p style="margin:24px 0"><a href="${esc(env.DASHBOARD_URL)}" style="display:inline-block;background:#1e6b5a;color:#fff;text-decoration:none;font-weight:600;font-size:18px;padding:14px 26px;border-radius:10px">Open the dashboard</a></p>`;
 
 export function buildEmail(d, env) {
-  const ready = d.ready || [], waiting = d.waiting_on_you || [], fresh = d.new_briefings || [];
-  const overdue = waiting.filter((w) => w.overdue).length;
+  const ready = d.ready || [], waiting = d.waiting_on_you || [], fresh = d.new_briefings || [], pairing = d.pairing || [];
   const parts = [];
+  const late = waiting.some((w) => w.overdue) ? "overdue" : "needed";
+  if (waiting.length === 1) parts.push(`Reply ${late} on ${waiting[0].key}`);
+  else if (waiting.length) parts.push(`${waiting.length} replies ${late}`);
   if (ready.length) parts.push(`${ready.length} ready`);
-  if (waiting.length) parts.push(`${waiting.length} waiting on you${overdue ? " (overdue)" : ""}`);
   if (fresh.length) parts.push(`${fresh.length} new`);
   if (d.token_warning) parts.push("token needs rotating");
   const subject = parts.join(" · ") || "Nothing needs you today";
 
   const list = (title, items, line) =>
     items.length ? `<h2 style="font-size:16px;margin:20px 0 6px">${title}</h2><ul style="padding-left:20px;margin:0">${items.map((i) => `<li style="margin:4px 0">${line(i)}</li>`).join("")}</ul>` : "";
+  const titled = (i) => linked(env, i.slug, `${esc(i.title)} <span style="color:#5b6964">${esc(i.key)}</span>`);
   const html = `<div style="font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#16201d;max-width:560px">
 <h1 style="font-size:20px;margin:0 0 8px">OSS Scout · ${esc(d.date)}</h1>
 ${d.token_warning ? `<p style="background:#fff1e0;padding:10px 12px;border-radius:8px"><b>Your GitHub token is ${esc(d.token_age_days)} days old.</b> Rotate it soon: submitting stops when it expires.</p>` : ""}
-${list("Ready for one tap", ready, (i) => `${esc(i.title)} <span style="color:#5b6964">${esc(i.key)}</span>`)}
-${list("Waiting on you", waiting, (w) => `${esc(w.key)}${w.overdue ? ' <b style="color:#cf222e">overdue</b>' : ""}`)}
-${list("New briefings", fresh, (i) => `${esc(i.title)} <span style="color:#5b6964">${esc(i.key)}</span>`)}
-<p style="margin:24px 0"><a href="${esc(env.DASHBOARD_URL)}" style="display:inline-block;background:#1e6b5a;color:#fff;text-decoration:none;font-weight:600;font-size:18px;padding:14px 26px;border-radius:10px">Open the dashboard</a></p>
+${list("Ready for one tap", ready, titled)}
+${list("Waiting on you", waiting, (w) => `${linked(env, w.slug, esc(w.key))}${w.overdue ? ' <b style="color:#cf222e">overdue</b>' : ""}`)}
+${list("New briefings", fresh, titled)}
+${pairing.length ? `<p style="margin:20px 0 0">Pairing queue: ${pairing.length}</p>` : ""}
+${openButton(env)}
 </div>`;
   const plain = [
     `OSS Scout ${d.date}`,
@@ -235,9 +257,29 @@ ${list("New briefings", fresh, (i) => `${esc(i.title)} <span style="color:#5b696
     ...ready.map((i) => `Ready: ${i.title} (${i.key})`),
     ...waiting.map((w) => `Waiting on you: ${w.key}${w.overdue ? " (overdue)" : ""}`),
     ...fresh.map((i) => `New: ${i.title} (${i.key})`),
+    pairing.length ? `Pairing queue: ${pairing.length}` : "",
     env.DASHBOARD_URL,
   ].filter(Boolean).join("\n");
   return { subject, html, text: plain };
+}
+
+export function buildAlertEmail(alerts, env) {
+  const subject = alerts.length === 1 ? `Reviewer replied on ${alerts[0].key}` : `${alerts.length} reviewers replied`;
+  const html = `<div style="font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#16201d;max-width:560px">
+<ul style="padding-left:20px;margin:0">${alerts.map((a) => `<li style="margin:4px 0">${linked(env, a.slug, `${esc(a.author)} on ${esc(a.key)}`)}</li>`).join("")}</ul>
+${openButton(env)}
+</div>`;
+  const plain = [...alerts.map((a) => `${a.author} on ${a.key}: ${deepLink(env, a.slug)}`), env.DASHBOARD_URL].join("\n");
+  return { subject, html, text: plain };
+}
+
+async function sendMail(env, mail, fetchFn) {
+  const out = await fetchFn("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ from: env.MAIL_FROM || "OSS Scout <scout@aadityad.dev>", to: [env.OWNER_EMAIL], ...mail }),
+  });
+  if (!out.ok) throw new Error(`Resend said ${out.status}`);
 }
 
 export async function sendDigest(env, { fetchFn = fetch, now = Date.now() } = {}) {
@@ -248,16 +290,56 @@ export async function sendDigest(env, { fetchFn = fetch, now = Date.now() } = {}
   if (!d.send) return { sent: false, reason: "nothing to send" };
   if (d.date !== today) return { sent: false, reason: `digest is from ${d.date}, not ${today}` };
   const mail = buildEmail(d, env);
-  const out = await fetchFn("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: env.MAIL_FROM || "OSS Scout <scout@aadityad.dev>", to: [env.OWNER_EMAIL], ...mail }),
-  });
-  if (!out.ok) throw new Error(`Resend said ${out.status}`);
+  await sendMail(env, mail, fetchFn);
   return { sent: true, subject: mail.subject };
 }
 
+// Quiet hours are 23:00 to 07:00 Pacific. Intl knows when daylight time starts and ends.
+export function inQuietHours(now) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: QUIET_TZ, hour: "numeric", hourCycle: "h23" }).formatToParts(now);
+  const hour = Number(parts.find((p) => p.type === "hour").value) % 24;
+  return hour >= 23 || hour < 7;
+}
+
+// Emails when a reviewer has replied. The data repo's track.yml rewrites alerts.json
+// every 3 hours; replies that land in quiet hours are not emailed (the digest has them).
+export async function sendAlerts(env, { fetchFn = fetch, now = Date.now() } = {}) {
+  const res = await dataFile(env, "alerts.json", fetchFn);
+  if (!res.ok) return { sent: false, reason: `alerts.json: ${res.status}` };
+  const data = await res.json();
+  const alerts = Array.isArray(data.alerts) ? data.alerts : [];
+  if (!alerts.length) return { sent: false, reason: "no alerts" };
+  if (!(now - Date.parse(data.generated_at) <= ALERT_WINDOW_MS)) return { sent: false, reason: `alerts are from ${data.generated_at}, too old` };
+  if (inQuietHours(now)) return { sent: false, reason: "quiet hours" };
+  const mail = buildAlertEmail(alerts, env);
+  await sendMail(env, mail, fetchFn);
+  return { sent: true, subject: mail.subject };
+}
+
+// -- review check ------------------------------------------------------------------
+
+// Starts the data repo's track.yml, which looks for reviewer replies and rewrites alerts.json.
+export async function dispatchTrack(env, { fetchFn = fetch } = {}) {
+  const res = await gh(env, `/repos/${env.DATA_REPO}/actions/workflows/track.yml/dispatches`, fetchFn, {
+    method: "POST",
+    headers: { accept: "application/vnd.github+json", "content-type": "application/json" },
+    body: JSON.stringify({ ref: "main" }),
+  });
+  if (res.status !== 204) throw new Error(`GitHub refused track.yml (${res.status})`);
+  return { dispatched: true };
+}
+
+// -- cron ----------------------------------------------------------------------------
+
+export const route = (cron) => CRONS[cron] || null;
+
 export default {
   fetch: (request, env) => handle(request, env),
-  scheduled: (event, env, ctx) => ctx.waitUntil(sendDigest(env)),
+  scheduled: (event, env, ctx) => {
+    const job = route(event.cron);
+    if (job === "digest") ctx.waitUntil(sendDigest(env));
+    else if (job === "track") ctx.waitUntil(dispatchTrack(env));
+    else if (job === "alerts") ctx.waitUntil(sendAlerts(env));
+    else console.log(`unknown cron "${event.cron}", doing nothing`);
+  },
 };

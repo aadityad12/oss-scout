@@ -6,6 +6,7 @@ import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from . import briefings
 from .config import Config
 from .score import parse_ts
 from .wip import snoozed
@@ -34,7 +35,8 @@ def waiting_on_you(st: dict, now: datetime) -> list[dict]:
         if done and since and done > parse_ts(since):
             continue  # already answered from the dashboard; the next scan will confirm
         hours = (now - parse_ts(since)).total_seconds() / 3600 if since else 0
-        out.append({"key": by_pr.get(p["url"], f"{p['repo']}#{p['number']}"), "pr_url": p["url"],
+        key = by_pr.get(p["url"], f"{p['repo']}#{p['number']}")
+        out.append({"key": key, "slug": briefings.slug(key), "pr_url": p["url"],
                     "since": since, "overdue": hours > OVERDUE_HOURS})
     return out
 
@@ -45,7 +47,8 @@ def build(cfg: Config, data: Path, st: dict, now: datetime | None = None) -> dic
     sugg = st.get("suggestions", {})
 
     def item(key: str) -> dict:
-        return {"key": key, "title": sugg[key].get("title", ""), "kind": sugg[key].get("kind", "pr")}
+        return {"key": key, "title": sugg[key].get("title", ""), "kind": sugg[key].get("kind", "pr"),
+                "slug": briefings.slug(key)}
 
     picks = data / "picks" / f"{today}.json"
     picked = set(json.loads(picks.read_text()).get("picked", [])) if picks.exists() else set()
@@ -60,6 +63,9 @@ def build(cfg: Config, data: Path, st: dict, now: datetime | None = None) -> dic
         "ready": [item(k) for k in ready],
         "waiting_on_you": waiting,
         "new_briefings": [item(k) for k in fresh],
+        "pairing": [{"key": k, "title": sugg[k].get("title", ""), "slug": briefings.slug(k)}
+                    for k in sorted(sugg) if sugg[k].get("pairing")
+                    and sugg[k].get("status") in ("suggested", "claimed", "ready", "approved")],
         "token_age_days": age,
         "token_warning": warn,
         "send": bool(ready or waiting or fresh or warn),  # an expiring token breaks submits

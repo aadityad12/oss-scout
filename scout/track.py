@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
+from . import briefings, state as statemod
 from .github import GitHub
 from .score import MAINTAINER, _days, parse_ts
 
+MAX_EXTRA_DRAFTS = 3  # Claude runs started by a review alert, per UTC day
 PENDING = {"ready", "approved", "submitting"}  # prepared, not yet a PR or a posted comment
 ACTIVE = {"suggested", "claimed", "pr_open", "waiting_on_you"} | PENDING
 MAX_REVIEW_COMMENTS = 10
@@ -168,3 +171,39 @@ def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_
         if s["status"] != old:
             s.setdefault("history", []).append({"at": now.isoformat(timespec="seconds"),
                                                 "from": old, "to": s["status"]})
+
+
+def alert(st: dict, data: Path, now: datetime | None = None) -> list[dict]:
+    """Find reviews that are new since the last check; write them to alerts.json."""
+    now = now or datetime.now(timezone.utc)
+    by_pr = {s["pr_url"]: k for k, s in st.get("suggestions", {}).items() if s.get("pr_url")}
+    before, alerted, new = st.get("alerted", {}), {}, []
+    for p in st.get("contributions", {}).get("prs", []):
+        if p.get("status") != "open" or not p.get("waiting_on_you"):
+            continue
+        last = max((c for c in p.get("review_comments", []) if parse_ts(c.get("at"))),
+                   key=lambda c: parse_ts(c["at"]), default={})
+        at = last.get("at") or p.get("updated_at") or p.get("created_at") or ""
+        alerted[p["url"]] = at
+        seen, current = parse_ts(before.get(p["url"])), parse_ts(at)
+        if p["url"] in before and not (current and (not seen or current > seen)):
+            continue
+        key = by_pr.get(p["url"], f"{p['repo']}#{p['number']}")
+        new.append({"at": at, "key": key, "slug": briefings.slug(key), "pr_url": p["url"],
+                    "author": last.get("author") or "a reviewer",
+                    "excerpt": " ".join((last.get("body") or "").split())[:140]})
+    st["alerted"] = alerted
+    statemod.write_json(data / "alerts.json", {"generated_at": now.isoformat(timespec="seconds"), "alerts": new})
+    return new
+
+
+def extra_draft(st: dict, new: list[dict], now: datetime | None = None) -> bool:
+    """True when these alerts should start a Claude run now; counts it against today's cap."""
+    today = (now or datetime.now(timezone.utc)).date().isoformat()
+    used = st.get("extra_drafts") or {}
+    if used.get("date") != today:
+        used = {"date": today, "n": 0}
+    fire = bool(new) and used["n"] < MAX_EXTRA_DRAFTS
+    used["n"] += fire
+    st["extra_drafts"] = used
+    return fire

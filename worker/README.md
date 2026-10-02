@@ -1,12 +1,14 @@
 # Private dashboard Worker
 
 Serves the private dashboard at **me.aadityad.dev**, starts the data repo's `act.yml`
-when you tap a button, and sends the 8am email. No npm dependencies.
+when you tap a button, sends the 8am email, and checks for reviewer replies every 3 hours
+(emailing you when there is one). No npm dependencies.
 
 ```
 phone -> Cloudflare Access (your email only) -> Worker -> GitHub (data repo)
                                                   |-> dispatches act.yml (the only thing that writes)
-                                                  `-> Resend (daily email, from a cron trigger)
+                                                  |-> dispatches track.yml (review check, from a cron trigger)
+                                                  `-> Resend (daily email and review alerts, from cron triggers)
 ```
 
 ## Setup, in order
@@ -76,6 +78,9 @@ Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also w
 
 - **Logs**: `npx wrangler tail`.
 - **Timing**: the cron `0 15 * * *` is 8am Pacific in summer and 7am in winter; edit `wrangler.toml` if you mind.
+- **Review check**: the cron `0 */3 * * *` (every 3 hours, on the hour, UTC) starts the data repo's `track.yml`, which looks for reviewer replies and rewrites `alerts.json`. The fine-grained token's **Actions: Read and write** already covers starting `track.yml`; no new permission is needed. The data repo must have `track.yml` on `main`.
+- **Review alerts**: the cron `30 */3 * * *` reads `alerts.json` half an hour later and emails you ("Reviewer replied on owner/repo#123", or "N reviewers replied") with a link to each item on the dashboard. It sends only if there is at least one alert, `alerts.json` was generated within the last 3 hours (a failed check never re-sends old news), and it is not quiet hours: 23:00 to 07:00 Pacific, daylight saving handled. Replies that arrive in quiet hours are not emailed on their own; the 8am email covers them.
+- **Changing a cron**: `src/index.js` picks the job by the exact cron string, so edit the string in `wrangler.toml` and in `CRONS` in `src/index.js` together (a test checks they agree).
 - **Rotating the GitHub token**: generate a new one, `npx wrangler secret put GITHUB_TOKEN`.
 - **Tests**: `cd worker && node --test`.
 
@@ -83,5 +88,5 @@ Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also w
 
 - Every request needs a valid Cloudflare Access token for your email (checked again here, not just at the edge).
 - `GET /` serves `dashboard.html` from the data repo, `GET /api/runs` lists the last five `act.yml` runs.
-- `POST /api/act` needs `content-type: application/json` and an `Origin` of `https://me.aadityad.dev`. `action` must be one of `submit`, `post`, `followup`, `approve`, `later`, `skip`; `key` must look like `owner/repo#123`; the title is at most 256 characters and the text at most 60000 (GitHub caps workflow inputs at 65,535 characters in total, so in practice about 45,000).
+- `POST /api/act` needs `content-type: application/json` and an `Origin` of `https://me.aadityad.dev`. `action` must be one of `submit`, `post`, `followup`, `approve`, `later`, `skip`, `prepare`, `pair`, `unpair`, `feature`, `unfeature`, `summary`; `key` must look like `owner/repo#123`; the title is at most 256 characters and the text at most 60000 (GitHub caps workflow inputs at 65,535 characters in total, so in practice about 45,000). `prepare`, `pair`, `unpair`, `feature` and `unfeature` ignore the title and text. `summary` takes the impact line as the text: required, at most 200 characters, one line; an empty string removes it.
 - It never writes to GitHub itself. It only starts the workflow.

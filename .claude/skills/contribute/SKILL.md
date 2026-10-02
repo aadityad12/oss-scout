@@ -43,8 +43,11 @@ only after they approve the exact content.
 
 ## Starting point
 
-- **No argument:** list open suggestions (status `ready`, `suggested` or `claimed`) from
-  `state.json`, newest first, one line each: key, title, mode, difficulty. Ask which.
+- **No argument:** first the **pairing queue** (suggestions with `pairing: true`, the ones
+  the owner tapped "Pair on laptop" for, oldest first), then other open suggestions
+  (status `ready`, `suggested` or `claimed`), newest first. One line each: key, title,
+  mode, difficulty. Ask which. When a pairing item ends in a PR, or the owner drops it,
+  remind them to tap **Unpair** on the dashboard (or that the PR moves it along anyway).
 - **An issue** (`owner/repo#123` or its URL): continue below.
 - **A PR link:** go to "Review feedback".
 

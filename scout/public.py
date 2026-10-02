@@ -1,7 +1,8 @@
 """The public page: the owner's own open source contributions, and nothing else.
 
 Everything here comes from the GitHub-derived `contributions` and the stars and
-language of the projects in `repos`. Briefings, suggestions, candidates and any
+language of the projects in `repos`, plus the owner's own choices in `state["public"]`
+(featured PRs and plain-language summaries). Briefings, suggestions, candidates and any
 per-project research never reach the output.
 """
 
@@ -17,6 +18,7 @@ from .score import parse_ts
 
 DEFAULT_DOMAIN = "oss.aadityad.dev"
 WEEKS = 26
+MAX_FEATURED = 3
 PR_FIELDS = ("repo", "number", "title", "summary", "url", "status", "created_at", "merged_at",
              "updated_at")
 
@@ -59,6 +61,33 @@ def projects_of(prs: list[dict], per_repo: dict, repos: dict) -> list[dict]:
     return sorted(out, key=lambda r: (-r["merged"], -r["open"], r["repo"]))
 
 
+def _clean(text) -> str | None:
+    return text.strip() or None if isinstance(text, str) else None
+
+
+def apply_public_choices(prs: list[dict], choices) -> tuple[list[dict], list[dict]]:
+    """Apply the owner's `state["public"]` to the PR list: (featured, the rest).
+
+    A plain-language summary there overrides the PR's own `summary`. Featured PRs are
+    merged ones only, in the owner's order, at most MAX_FEATURED; unknown, open and
+    repeated urls are skipped. Featured PRs leave the main list so nothing shows twice.
+    """
+    choices = choices if isinstance(choices, dict) else {}
+    summaries = choices.get("summaries")
+    summaries = summaries if isinstance(summaries, dict) else {}
+    for p in prs:
+        p["summary"] = _clean(summaries.get(p["url"])) or _clean(p.get("summary"))
+    wanted = choices.get("featured")
+    by_url = {p["url"]: p for p in prs if p["status"] == "merged"}
+    featured: list[dict] = []
+    for url in wanted if isinstance(wanted, list) else []:
+        pr = by_url.get(url) if isinstance(url, str) else None
+        if pr and pr not in featured:
+            featured.append(pr)
+    featured = featured[:MAX_FEATURED]
+    return featured, [p for p in prs if not any(p is f for f in featured)]
+
+
 def build_payload(cfg: Config, st: dict, domain: str | None = None,
                   now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
@@ -67,6 +96,7 @@ def build_payload(cfg: Config, st: dict, domain: str | None = None,
     # only merged and open PRs: the page shows what landed and what is in review
     prs = [{k: p.get(k) for k in PR_FIELDS} for p in c.get("prs", [])
            if p.get("status") in ("merged", "open")]
+    featured, listed = apply_public_choices(prs, st.get("public"))
     issues = [{k: i.get(k) for k in ("repo", "number", "title", "url", "state", "created_at")}
               for i in c.get("issues", [])]
     reviews = [{k: r.get(k) for k in ("repo", "number", "title", "url")}
@@ -79,7 +109,8 @@ def build_payload(cfg: Config, st: dict, domain: str | None = None,
         "merged_prs": sum(p["status"] == "merged" for p in prs),
         "open_prs": sum(p["status"] == "open" for p in prs),
         "projects": projects,
-        "prs": prs,
+        "featured": featured,
+        "prs": listed,
         "issues": issues,
         "reviews": reviews,
         "activity": activity(prs, issues, now),

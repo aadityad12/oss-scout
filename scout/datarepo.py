@@ -67,7 +67,7 @@ on:
         description: "What to do"
         required: true
         type: choice
-        options: [submit, post, followup, approve, later, skip]
+        options: [submit, post, followup, approve, later, skip, prepare, pair, unpair, feature, unfeature, summary]
       title:
         description: "Edited PR title (or commit message for a follow-up)"
         required: false
@@ -88,7 +88,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: act
+  group: data
   cancel-in-progress: false
 
 jobs:
@@ -179,6 +179,103 @@ jobs:
         run: exit 1
 """
 
+TRACK_YML = r"""name: track
+
+# Every three hours the dashboard's Worker starts this (workflow_dispatch). It
+# refreshes your PR history and notes reviews that are new since the last check,
+# without any AI. When there is one, it also starts a Claude draft, at most
+# three times a day. This file must live on the default branch (main).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the data
+        uses: actions/checkout@v4
+        with:
+          ref: claude/scout-data
+          path: data
+
+      - name: Check out the tool
+        uses: actions/checkout@v4
+        with:
+          repository: aadityad12/oss-scout
+          path: tool
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check for new reviews
+        id: track
+        working-directory: tool
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOUT_DATA_DIR: ../data
+        run: python -m scout track
+
+      - name: Refresh the dashboard and digest
+        working-directory: tool
+        env:
+          SCOUT_DATA_DIR: ../data
+        run: |
+          python -m scout digest
+          python -m scout render
+
+      - name: Save to the data repo
+        working-directory: data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -q -m "track: $(date -u +%Y-%m-%d)"
+            saved=""
+            for attempt in 1 2 3; do
+              if git pull -q --rebase origin claude/scout-data && git push -q origin HEAD:claude/scout-data; then
+                saved=yes
+                break
+              fi
+              git rebase --abort 2>/dev/null || true
+              sleep $((attempt * 5))
+            done
+            if [ -z "$saved" ]; then
+              echo "::error::Saving the new state to the data repo failed."
+              exit 1
+            fi
+          fi
+
+      - name: Start a Claude draft
+        if: steps.track.outputs.fire == 'true'
+        env:
+          ROUTINE_FIRE_URL: ${{ secrets.ROUTINE_FIRE_URL }}
+          ROUTINE_TOKEN: ${{ secrets.ROUTINE_TOKEN }}
+        run: |
+          if [ -z "$ROUTINE_FIRE_URL" ] || [ -z "$ROUTINE_TOKEN" ]; then
+            echo "Routine trigger not configured"
+            exit 0
+          fi
+          curl -sS --fail-with-body -o /dev/null -X POST "$ROUTINE_FIRE_URL" \
+            -H "Authorization: Bearer $ROUTINE_TOKEN" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+"""
+
 GITIGNORE = ".cache/\n*.tmp\n__pycache__/\n"
 
 # The nightly session runs on Sonnet. Opus is an escalation, used at most once per
@@ -250,6 +347,8 @@ def init(data: Path, login: str) -> list[str]:
     wf.mkdir(parents=True, exist_ok=True)
     (wf / "act.yml").write_text(ACT_YML)
     written.append(".github/workflows/act.yml")
+    (wf / "track.yml").write_text(TRACK_YML)
+    written.append(".github/workflows/track.yml")
     gi = data / ".gitignore"
     if not gi.exists():
         gi.write_text(GITIGNORE)

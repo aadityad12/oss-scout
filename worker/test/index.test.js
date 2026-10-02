@@ -1,7 +1,8 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  handle, verifyAccess, resetCertCache, parseAct, buildEmail, sendDigest, toBase64, ACTIONS,
+  handle, verifyAccess, resetCertCache, parseAct, buildEmail, buildAlertEmail, sendDigest, sendAlerts, dispatchTrack,
+  route, inQuietHours, toBase64, ACTIONS,
 } from "../src/index.js";
 
 const TEAM = "team.cloudflareaccess.com";
@@ -238,6 +239,14 @@ test("validates the input", async () => {
     { key: "o/r#7", action: "submit", body: "b".repeat(60001) },
     { key: "o/r#7", action: "submit", body: "b".repeat(50000) }, // fits the cap but not GitHub's dispatch limit
     { key: "o/r#7", action: "submit", body: { x: 1 } },
+    { key: "o/r#7", action: "summary" }, // the impact line is required
+    { key: "o/r#7", action: "summary", body: 5 },
+    { key: "o/r#7", action: "summary", body: "line one\nline two" },
+    { key: "o/r#7", action: "summary", body: "line one\r\nline two" },
+    { key: "o/r#7", action: "summary", body: "s".repeat(201) },
+    { key: "o/r", action: "feature" },
+    { key: "o/r#x", action: "pair" },
+    { key: "o/r#7", action: "Prepare" },
   ];
   for (const payload of bad) {
     const res = await run(await postAct(payload), DISPATCH);
@@ -247,9 +256,34 @@ test("validates the input", async () => {
 });
 
 test("accepts every action and the size limits", async () => {
-  for (const action of ACTIONS) assert.equal(parseAct({ key: "a-b/c.d_e#123", action }).action, action);
+  for (const action of ACTIONS) assert.equal(parseAct({ key: "a-b/c.d_e#123", action, body: "" }).action, action);
   assert.ok(!parseAct({ key: "o/r#7", action: "submit", title: "t".repeat(256), body: "b".repeat(40000) }).error);
-  assert.deepEqual([...ACTIONS].sort(), ["approve", "followup", "later", "post", "skip", "submit"]);
+  assert.deepEqual([...ACTIONS].sort(), ["approve", "feature", "followup", "later", "pair", "post", "prepare", "skip", "submit", "summary", "unfeature", "unpair"]);
+});
+
+test("the new actions send no text, except summary", () => {
+  const blank = { title: "", body_b64: "", dry_run: "false" };
+  for (const action of ["prepare", "pair", "unpair", "feature", "unfeature"]) {
+    // title and body are ignored, even when they would be invalid for another action
+    assert.deepEqual(parseAct({ key: "o/r#7", action, title: "t", body: "b" }).inputs, { key: "o/r#7", action, ...blank });
+    assert.deepEqual(parseAct({ key: "o/r#7", action, title: 5, body: { x: 1 } }).inputs, { key: "o/r#7", action, ...blank });
+    assert.deepEqual(parseAct({ key: "o/r#7", action }).inputs, { key: "o/r#7", action, ...blank });
+  }
+  const line = "Fixes a crash for 10M installs";
+  assert.deepEqual(parseAct({ key: "o/r#7", action: "summary", body: line, title: "ignored" }).inputs, { key: "o/r#7", action: "summary", title: "", body_b64: toBase64(line), dry_run: "false" });
+  assert.equal(parseAct({ key: "o/r#7", action: "summary", body: "s".repeat(200) }).error, undefined);
+  assert.equal(parseAct({ key: "o/r#7", action: "summary", body: "ünï ✓" }).inputs.body_b64, toBase64("ünï ✓"));
+  // an empty summary is allowed and means remove
+  assert.deepEqual(parseAct({ key: "o/r#7", action: "summary", body: "" }).inputs, { key: "o/r#7", action: "summary", ...blank });
+});
+
+test("a new action is dispatched through the act workflow", async () => {
+  const res = await run(await postAct({ key: "o/r#7", action: "summary", body: "Faster startup" }), DISPATCH);
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(githubCalls()[0].init.body).inputs, { key: "o/r#7", action: "summary", title: "", body_b64: toBase64("Faster startup"), dry_run: "false" });
+  calls = [];
+  assert.equal((await run(await postAct({ key: "o/r#7", action: "summary", body: "a\nb" }), DISPATCH)).status, 400);
+  assert.equal(githubCalls().length, 0);
 });
 
 // -- GET /api/runs ----------------------------------------------------------------------
@@ -270,15 +304,15 @@ test("lists the latest runs of the act workflow", async () => {
 
 const DIGEST = {
   date: "2026-10-02",
-  ready: [{ key: "o/r#1", title: "Fix <b>crash</b> & more", kind: "pr" }],
-  waiting_on_you: [{ key: "o/r#2", pr_url: "https://github.com/o/r/pull/2", overdue: true }, { key: "x/y#3", overdue: false }],
-  new_briefings: [{ key: "o/r#4", title: "Something \"new\"", kind: "pr" }],
+  ready: [{ key: "o/r#1", title: "Fix <b>crash</b> & more", kind: "pr", slug: "o__r__1" }],
+  waiting_on_you: [{ key: "o/r#2", pr_url: "https://github.com/o/r/pull/2", overdue: true, slug: "o__r__2" }, { key: "x/y#3", overdue: false }],
+  new_briefings: [{ key: "o/r#4", title: "Something \"new\"", kind: "pr", slug: "o__r__4" }],
   token_age_days: 85, token_warning: true, send: true,
 };
 
 test("builds a short escaped email", () => {
   const m = buildEmail(DIGEST, ENV);
-  assert.equal(m.subject, "1 ready · 2 waiting on you (overdue) · 1 new · token needs rotating");
+  assert.equal(m.subject, "2 replies overdue · 1 ready · 1 new · token needs rotating");
   assert.match(m.html, /Fix &lt;b&gt;crash&lt;\/b&gt; &amp; more/);
   assert.doesNotMatch(m.html, /<b>crash/);
   assert.match(m.html, /Something &quot;new&quot;/);
@@ -286,7 +320,41 @@ test("builds a short escaped email", () => {
   assert.match(m.html, /85 days old/);
   assert.match(m.html, /href="https:\/\/me\.aadityad\.dev"/);
   assert.match(m.text, /https:\/\/me\.aadityad\.dev/);
-  assert.equal(buildEmail({ ...DIGEST, ready: [DIGEST.ready[0], DIGEST.ready[0]], waiting_on_you: [DIGEST.waiting_on_you[1]], new_briefings: [], token_warning: false }, ENV).subject, "2 ready · 1 waiting on you");
+});
+
+test("digest items link to their place on the dashboard when they have a slug", () => {
+  const m = buildEmail(DIGEST, ENV);
+  for (const slug of ["o__r__1", "o__r__2", "o__r__4"]) assert.match(m.html, new RegExp(`href="https://me\\.aadityad\\.dev/#${slug}"`));
+  assert.equal(m.html.match(/href="https:\/\/me\.aadityad\.dev\/#/g).length, 3); // x/y#3 has no slug, so no link
+  assert.match(m.html, /x\/y#3/);
+  const hostile = { ...DIGEST, ready: [{ key: "o/r#1", title: "t", slug: 'a"b c/d' }], waiting_on_you: [], new_briefings: [] };
+  assert.match(buildEmail(hostile, ENV).html, /href="https:\/\/me\.aadityad\.dev\/#a%22b%20c%2Fd"/);
+  assert.match(buildEmail(DIGEST, { ...ENV, DASHBOARD_URL: "https://me.aadityad.dev/" }).html, /href="https:\/\/me\.aadityad\.dev\/#o__r__1"/);
+});
+
+test("the digest subject names what needs you, most urgent first", () => {
+  const w = (key) => ({ key, overdue: false });
+  const one = { ...DIGEST, waiting_on_you: [w("pydantic/pydantic#9002")], ready: [DIGEST.ready[0]], new_briefings: [DIGEST.new_briefings[0], DIGEST.new_briefings[0]], token_warning: false };
+  assert.equal(buildEmail(one, ENV).subject, "Reply needed on pydantic/pydantic#9002 · 1 ready · 2 new");
+  assert.equal(buildEmail({ ...one, waiting_on_you: [w("a/b#1"), w("c/d#2")] }, ENV).subject, "2 replies needed · 1 ready · 2 new");
+  assert.equal(buildEmail({ ...one, waiting_on_you: [] }, ENV).subject, "1 ready · 2 new");
+  assert.equal(buildEmail({ ...one, ready: [], new_briefings: [] }, ENV).subject, "Reply needed on pydantic/pydantic#9002");
+  assert.equal(buildEmail({ ...one, waiting_on_you: [], ready: [], new_briefings: [], token_warning: true }, ENV).subject, "token needs rotating");
+  assert.equal(buildEmail({ ...one, waiting_on_you: [], ready: [], new_briefings: [] }, ENV).subject, "Nothing needs you today");
+  assert.equal(buildEmail({ ...one, waiting_on_you: [w("a/b#1")], token_warning: true }, ENV).subject, "Reply needed on a/b#1 · 1 ready · 2 new · token needs rotating");
+});
+
+test("the pairing queue shows in the body only, and only when it is not empty", () => {
+  const withQueue = { ...DIGEST, pairing: [{ key: "o/r#5", title: "t", slug: "o__r__5" }, { key: "o/r#6", title: "t", slug: "o__r__6" }] };
+  const m = buildEmail(withQueue, ENV);
+  assert.match(m.html, /Pairing queue: 2/);
+  assert.match(m.text, /Pairing queue: 2/);
+  assert.doesNotMatch(m.subject, /pairing/i);
+  for (const d of [DIGEST, { ...DIGEST, pairing: [] }]) {
+    const none = buildEmail(d, ENV);
+    assert.doesNotMatch(none.html, /Pairing/);
+    assert.doesNotMatch(none.text, /Pairing/);
+  }
 });
 
 test("sends when send is true and the date is today", async () => {
@@ -330,4 +398,167 @@ test("does not send when send is false, the date is stale, or the digest is miss
 test("a failed send is an error, so the cron run shows red", async () => {
   const fetchFn = fetchMock({ "https://api.github.com/": Response.json(DIGEST), "https://api.resend.com/": new Response("no", { status: 403 }) });
   await assert.rejects(sendDigest(ENV, { fetchFn, now: NOW }), /Resend said 403/);
+});
+
+// -- crons ----------------------------------------------------------------------------
+
+test("routes each cron to its job, and unknown ones to nothing", () => {
+  assert.equal(route("0 15 * * *"), "digest");
+  assert.equal(route("0 */3 * * *"), "track");
+  assert.equal(route("30 */3 * * *"), "alerts");
+  for (const cron of ["", undefined, "0 0 * * *", "30 15 * * *"]) assert.equal(route(cron), null);
+});
+
+test("wrangler.toml lists exactly the crons the Worker routes", async () => {
+  const { readFileSync } = await import("node:fs");
+  const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
+  const crons = [...toml.match(/^crons = \[(.*)\]/m)[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(crons, ["0 15 * * *", "0 */3 * * *", "30 */3 * * *"]);
+  for (const cron of crons) assert.notEqual(route(cron), null);
+});
+
+test("the scheduled handler runs the routed job and ignores unknown crons", async () => {
+  const { default: worker } = await import("../src/index.js");
+  const realFetch = globalThis.fetch, realLog = console.log;
+  const logs = [];
+  console.log = (m) => logs.push(m);
+  globalThis.fetch = fetchMock({ "https://api.github.com/": new Response(null, { status: 204 }) });
+  try {
+    const waits = [];
+    worker.scheduled({ cron: "0 */3 * * *" }, ENV, { waitUntil: (p) => waits.push(p) });
+    assert.equal(waits.length, 1);
+    assert.deepEqual(await waits[0], { dispatched: true });
+    worker.scheduled({ cron: "5 4 * * *" }, ENV, { waitUntil: (p) => waits.push(p) });
+    assert.equal(waits.length, 1);
+    assert.match(logs[0], /unknown cron "5 4 \* \* \*"/);
+  } finally {
+    globalThis.fetch = realFetch;
+    console.log = realLog;
+  }
+});
+
+test("dispatches track.yml on main with no inputs", async () => {
+  const out = await dispatchTrack(ENV, { fetchFn: fetchMock(DISPATCH) });
+  assert.deepEqual(out, { dispatched: true });
+  const [g] = githubCalls();
+  assert.equal(g.url, "https://api.github.com/repos/aadityad12/oss-scout-data/actions/workflows/track.yml/dispatches");
+  assert.equal(g.init.method, "POST");
+  assert.equal(g.init.headers.authorization, "Bearer ghp_test");
+  assert.deepEqual(JSON.parse(g.init.body), { ref: "main" });
+});
+
+test("a track.yml dispatch that is not a 204 is an error, so the cron run shows red", async () => {
+  await assert.rejects(dispatchTrack(ENV, { fetchFn: fetchMock({ "https://api.github.com/": new Response("secret", { status: 404 }) }) }), /track\.yml \(404\)/);
+  await assert.rejects(dispatchTrack(ENV, { fetchFn: fetchMock({ "https://api.github.com/": new Response("{}", { status: 200 }) }) }), /200/);
+});
+
+// -- review alerts --------------------------------------------------------------------
+
+const ALERT = { at: "2026-10-02T14:20:00Z", key: "pydantic/pydantic#9001", slug: "pydantic__pydantic__9001", pr_url: "https://github.com/pydantic/pydantic/pull/9001", author: "samuelcolvin", excerpt: "please add a test" };
+const alertsFile = (alerts, generated_at) => ({ generated_at, alerts });
+const ALERTS_NOW = Date.parse("2026-10-02T14:30:00Z"); // 07:30 PDT
+const alertFetch = (file) => fetchMock({ "https://api.github.com/": Response.json(file), "https://api.resend.com/": Response.json({ id: "1" }) });
+const resendCalls = () => calls.filter((c) => c.url.includes("resend"));
+
+test("sends an alert email when the check is fresh, in the window and outside quiet hours", async () => {
+  const out = await sendAlerts(ENV, { fetchFn: alertFetch(alertsFile([ALERT], "2026-10-02T14:00:00Z")), now: ALERTS_NOW });
+  assert.equal(out.sent, true);
+  assert.equal(out.subject, "Reviewer replied on pydantic/pydantic#9001");
+  assert.equal(calls[0].url, "https://api.github.com/repos/aadityad12/oss-scout-data/contents/alerts.json?ref=claude%2Fscout-data");
+  const [mail] = resendCalls();
+  assert.equal(mail.init.headers.authorization, "Bearer re_test");
+  const sent = JSON.parse(mail.init.body);
+  assert.equal(sent.from, "OSS Scout <scout@aadityad.dev>");
+  assert.deepEqual(sent.to, [ENV.OWNER_EMAIL]);
+  assert.match(sent.html, /href="https:\/\/me\.aadityad\.dev\/#pydantic__pydantic__9001"/);
+});
+
+test("the freshness window is 3 hours", async () => {
+  const at = (generated_at) => sendAlerts(ENV, { fetchFn: alertFetch(alertsFile([ALERT], generated_at)), now: ALERTS_NOW });
+  assert.equal((await at("2026-10-02T11:30:00Z")).sent, true); // exactly 3 hours
+  const stale = await at("2026-10-02T11:29:59Z");
+  assert.equal(stale.sent, false);
+  assert.match(stale.reason, /too old/);
+  assert.equal((await at(undefined)).sent, false);
+  assert.equal((await at("not a date")).sent, false);
+});
+
+test("does not send when there are no alerts, or alerts.json is missing", async () => {
+  for (const file of [alertsFile([], "2026-10-02T14:00:00Z"), { generated_at: "2026-10-02T14:00:00Z" }, { generated_at: "2026-10-02T14:00:00Z", alerts: null }]) {
+    calls = [];
+    const out = await sendAlerts(ENV, { fetchFn: alertFetch(file), now: ALERTS_NOW });
+    assert.equal(out.sent, false);
+    assert.equal(resendCalls().length, 0);
+  }
+  const missing = await sendAlerts(ENV, { fetchFn: fetchMock({ "https://api.github.com/": new Response("", { status: 404 }) }), now: ALERTS_NOW });
+  assert.equal(missing.sent, false);
+});
+
+test("quiet hours are 23:00 to 07:00 Pacific, in daylight and standard time", async () => {
+  const pdt = [ // October: UTC-7
+    ["2026-10-02T05:30:00Z", false], // 22:30 the evening before
+    ["2026-10-02T06:00:00Z", true], // 23:00
+    ["2026-10-02T09:30:00Z", true], // 02:30
+    ["2026-10-02T13:59:00Z", true], // 06:59
+    ["2026-10-02T14:00:00Z", false], // 07:00
+    ["2026-10-02T14:30:00Z", false], // 07:30
+  ];
+  const pst = [ // December: UTC-8, so the same UTC time is an hour later on the clock
+    ["2026-12-02T06:30:00Z", false], // 22:30 the evening before
+    ["2026-12-02T07:00:00Z", true], // 23:00
+    ["2026-12-02T10:30:00Z", true], // 02:30
+    ["2026-12-02T14:59:00Z", true], // 06:59
+    ["2026-12-02T15:00:00Z", false], // 07:00
+    ["2026-12-02T15:30:00Z", false], // 07:30
+  ];
+  for (const [iso, quiet] of [...pdt, ...pst]) {
+    assert.equal(inQuietHours(Date.parse(iso)), quiet, iso);
+    calls = [];
+    const now = Date.parse(iso);
+    const generated = new Date(now - 30 * 60 * 1000).toISOString();
+    const out = await sendAlerts(ENV, { fetchFn: alertFetch(alertsFile([ALERT], generated)), now });
+    assert.equal(out.sent, !quiet, iso);
+    assert.equal(resendCalls().length, quiet ? 0 : 1, iso);
+  }
+  // the same UTC clock time lands on different sides of the line in summer and winter
+  assert.equal(inQuietHours(Date.parse("2026-10-02T14:30:00Z")), false);
+  assert.equal(inQuietHours(Date.parse("2026-12-02T14:30:00Z")), true);
+  // midnight and the DST switch days
+  assert.equal(inQuietHours(Date.parse("2026-10-02T07:00:00Z")), true); // 00:00 PDT
+  assert.equal(inQuietHours(Date.parse("2026-11-01T15:00:00Z")), false); // 07:00 PST, the morning clocks go back
+  assert.equal(inQuietHours(Date.parse("2026-11-01T14:30:00Z")), true); // 06:30 PST
+});
+
+test("a failed alert send is an error, so the cron run shows red", async () => {
+  const fetchFn = fetchMock({ "https://api.github.com/": Response.json(alertsFile([ALERT], "2026-10-02T14:00:00Z")), "https://api.resend.com/": new Response("no", { status: 403 }) });
+  await assert.rejects(sendAlerts(ENV, { fetchFn, now: ALERTS_NOW }), /Resend said 403/);
+});
+
+test("alert email: subject, short body, links", () => {
+  const one = buildAlertEmail([ALERT], ENV);
+  assert.equal(one.subject, "Reviewer replied on pydantic/pydantic#9001");
+  assert.match(one.html, /<a href="https:\/\/me\.aadityad\.dev\/#pydantic__pydantic__9001"[^>]*>samuelcolvin on pydantic\/pydantic#9001<\/a>/);
+  assert.match(one.html, /Open the dashboard/);
+  assert.match(one.html, /href="https:\/\/me\.aadityad\.dev"/);
+  assert.doesNotMatch(one.html, /please add a test/); // no excerpt
+  assert.doesNotMatch(one.text, /please add a test/);
+  assert.match(one.text, /samuelcolvin on pydantic\/pydantic#9001: https:\/\/me\.aadityad\.dev\/#pydantic__pydantic__9001/);
+  assert.match(one.text, /\nhttps:\/\/me\.aadityad\.dev$/);
+
+  const two = buildAlertEmail([ALERT, { ...ALERT, key: "o/r#2", slug: "o__r__2", author: "bob" }], ENV);
+  assert.equal(two.subject, "2 reviewers replied");
+  assert.match(two.html, /href="https:\/\/me\.aadityad\.dev\/#o__r__2"/);
+  assert.equal(two.html.match(/<li /g).length, 2);
+  assert.match(two.text, /bob on o\/r#2/);
+});
+
+test("alert email escapes everything and encodes the slug", () => {
+  const evil = { ...ALERT, author: '<img src=x onerror=alert(1)>"&', key: "o/r#1<script>", slug: 'a"><script>alert(1)</script>/b' };
+  const m = buildAlertEmail([evil], ENV);
+  assert.doesNotMatch(m.html, /<img|<script/);
+  assert.match(m.html, /&lt;img src=x onerror=alert\(1\)&gt;&quot;&amp;/);
+  assert.match(m.html, /href="https:\/\/me\.aadityad\.dev\/#a%22%3E%3Cscript%3Ealert\(1\)%3C%2Fscript%3E%2Fb"/);
+  assert.match(m.subject, /o\/r#1<script>/); // the subject is plain text, not HTML
+  const noSlug = buildAlertEmail([{ ...ALERT, slug: undefined }], ENV);
+  assert.doesNotMatch(noSlug.html, /#undefined/);
 });
