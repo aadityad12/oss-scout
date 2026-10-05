@@ -55,6 +55,14 @@ class ActError(Exception):
     pass
 
 
+class Stale(ActError):
+    """The patch no longer fits: the code it was drafted against has changed."""
+
+    def __init__(self, files: list[str]):
+        self.files = files
+        super().__init__(f"the change no longer fits {', '.join(files) or 'the current code'}")
+
+
 def fail(msg: str):
     raise ActError(msg)
 
@@ -217,12 +225,22 @@ def commit(work: Path, who: tuple[str, str], message: str, signoff: bool) -> Non
          "commit", *(["-s"] if signoff else []), "-m", message], work)
 
 
+# where `git apply` names a file it could not fit: a 3-way conflict, a failed hunk,
+# a missing file, or a new file that now exists
+MISFIT = re.compile(r"^U (\S+)$|patch failed: ([^:\s]+):\d+|Applied patch to '([^']+)' with conflicts"
+                    r"|error: ([^:\s]+): (?:already exists|does not exist)", re.M)
+
+
 def apply_patch(work: Path, patch: Path) -> None:
     patch = patch.resolve()  # git runs inside work, so a relative path would miss
     try:
         git(["apply", "--index", str(patch)], work)
     except ActError:
-        git(["apply", "--3way", str(patch)], work)
+        try:
+            git(["apply", "--3way", str(patch)], work)
+        except ActError as e:
+            files = [next(g for g in m.groups() if g) for m in MISFIT.finditer(str(e))]
+            raise Stale(sorted(set(files))) from e
 
 
 def clone(full_name: str, into: Path, branch: str | None = None) -> None:
@@ -289,6 +307,8 @@ def owner_comment(job: Job, repo: str, number: int, text: str, since: datetime |
 
 def submit(job: Job) -> dict:
     s, b = ready_item(job, ("pr",))
+    if s.get("refresh_requested_at"):
+        fail(f"{job.repo} changed since this was drafted, and the next nightly run will redraft it")
     pr = briefings.read_json(job.folder / "pr.json")
     for field in ("branch", "base"):
         if not sane_ref(pr[field]):
@@ -334,6 +354,13 @@ def submit(job: Job) -> dict:
             commit(work, who, message, pr["signoff"])
             git(["push", *(["--force-with-lease"] if existing else []), "origin", f"HEAD:refs/heads/{branch}"], work)
         made = ghwrite.create_pr(job.repo, title, body, f"{fork.split('/')[0]}:{branch}", base)
+    except Stale as e:
+        job.move(s, "approved")
+        s.pop("submitting_at", None)
+        s["refresh_requested_at"] = job.stamp  # the nightly run redrafts it on top of the latest code
+        s["last_error"] = (f"{job.repo} changed since this was drafted, so {e}. Nothing was posted. "
+                           "The next nightly run will redraft it on top of the latest code.")
+        raise ActError(f"submit failed: {s['last_error']}") from e
     except Exception as e:
         job.move(s, "approved")
         s.pop("submitting_at", None)
@@ -433,6 +460,10 @@ def followup(job: Job) -> dict:
                 git(["push", "origin", f"HEAD:refs/heads/{branch}"], work)
             s["followup_pushed"] = rel
         made = ghwrite.comment(m.group(1), int(m.group(3)), reply)
+    except Stale as e:
+        s["last_error"] = (f"The PR branch changed since this fix was drafted, so {e}. Nothing was pushed "
+                           "or posted. Take it to a /contribute session.")
+        raise ActError(f"follow-up failed: {s['last_error']}") from e
     except Exception as e:
         s["last_error"] = mask(str(e))[:500]
         raise ActError(f"follow-up failed: {mask(str(e))}") from e

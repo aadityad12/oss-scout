@@ -22,6 +22,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .score import parse_ts
+
 REQUIRED = {
     "key": str, "repo": str, "number": int, "title": str, "url": str,
     "summary": str,            # the issue in plain English
@@ -181,6 +183,13 @@ def load_all(data: Path) -> list[dict]:
     return out
 
 
+def _ts(value) -> datetime | None:
+    try:
+        return parse_ts(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
 def ingest(data: Path, state: dict) -> int:
     added = 0
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -194,6 +203,14 @@ def ingest(data: Path, state: dict) -> int:
             fu = b["_followup"]
             if fu and not fu["problems"]:
                 s["followup"], s["followup_kind"] = fu["dir"], fu["kind"]
+            asked, done = _ts(s.get("refresh_requested_at")), _ts(b.get("refreshed_at"))
+            if asked and done and done >= asked and status == "ready" and s["status"] in ("ready", "approved"):
+                # redrafted on top of the latest code: back to Ready, so the owner sees the new diff
+                for k in ("refresh_requested_at", "last_error"):
+                    s.pop(k, None)
+                if s["status"] == "approved":
+                    s["status"] = "ready"
+                    s.setdefault("history", []).append({"at": now, "from": "approved", "to": "ready"})
             if status == "ready" and s["status"] == "suggested":
                 s.update(status="ready", kind=b.get("kind", "pr"))
                 s.setdefault("history", []).append({"at": now, "from": "suggested", "to": "ready"})

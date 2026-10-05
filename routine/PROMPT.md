@@ -63,7 +63,7 @@ This run is on Sonnet; do the triage, drafting and briefings yourself.
    scan finishes and saves its results into this repo; a later scheduled run is only a
    fallback. (This session can't call the GitHub API for other repos, and it doesn't
    need to: cloning public repos still works.) Dates are UTC (`date -u +%F`).
-   - Always do steps 3 and 4 (follow-ups and impact lines) first.
+   - Always do steps 3, 3b and 4 (follow-ups, redrafts and impact lines) first.
    - Then, if `$DATA/picks/<today>.json` exists and its `considered` list isn't empty,
      tonight's picks already happened: this is a daytime run started because a reviewer
      replied. Skip steps 5–7 and go to step 8.
@@ -85,6 +85,18 @@ This run is on Sonnet; do the triage, drafting and briefings yourself.
    - `discuss`: the reviewer questions the approach or asks why. Talking points only,
      `patch: null`; the owner takes it to a `/contribute` session.
    - Guide-mode projects: no patch. `ai_posts_forbidden` projects: `discuss` only.
+3b. **Redraft stale drafts.** For each suggestion in `$DATA/state.json` with a
+   `refresh_requested_at`, Submit found that its `draft.patch` no longer applies: the
+   project changed since it was drafted. Shallow-clone the project's default branch
+   and rebuild the same change on top of it. Keep the intent and scope; only move or
+   adapt what the new code requires. Re-run the narrowest tests, then overwrite
+   `draft.patch`, update `tests` in the briefing, and set `"refreshed_at": "<ISO now>"`
+   in `briefing.json` (keep `"ready": true`). Ingest then puts the item back in Ready
+   for the owner to look at again. Check `git apply --check` against a fresh clone of
+   the default branch before writing it. If the change is no longer needed (upstream
+   fixed it) or can't be rebuilt without a new design decision, leave `draft.patch`
+   alone and write one plain sentence saying why in the briefing's `refresh_note`; the
+   owner sees it on the dashboard. Redrafts don't count against `max_ready`.
 4. **Impact lines for merged PRs.** For each PR in `contributions.prs` with status
    `merged` whose `url` has no entry in `state.json` → `public.summaries`, add one: a
    single plain-English line a recruiter understands, under 120 characters, saying what

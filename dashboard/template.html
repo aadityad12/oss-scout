@@ -443,8 +443,12 @@ function bar(defs) {
 /* ---------- detail views ---------- */
 
 function problemsHtml(it) {
+  const note = (it.briefing || {}).refresh_note;
   return `${(it.problems || []).length ? `<div class="err">This item no longer validates and will be refused: ${esc(it.problems.join("; "))}</div>` : ""}
-    ${it.last_error ? `<div class="err">Last attempt failed: ${esc(it.last_error)}</div>` : ""}`;
+    ${it.refresh_requested_at
+      ? `<p class="reason"><b>Being redrafted.</b> ${esc(it.repo)} changed since this was drafted, so the change no longer fits. Nothing was posted. The next nightly run redrafts it on top of the latest code, and it comes back here for you to check before submitting.</p>
+        ${note ? `<p class="reason">From the last redraft attempt: ${esc(note)}</p>` : ""}`
+      : it.last_error ? `<div class="err">Last attempt failed: ${esc(it.last_error)}</div>` : ""}`;
 }
 
 function detailReady(it) {
@@ -470,7 +474,7 @@ function detailReady(it) {
     ${folds(b, false)}
     ${modelsLine(b)}
     ${it.pairing ? `<p class="note">In your pairing queue. <button class="linkbtn" type="button" data-act="unpair">Unpair</button></p>` : ""}
-    ${bar([[isPr ? "submit" : "post", verb, "primary"], ["later", "Later"], ["skip", "Skip", "danger"]])}
+    ${bar([...(it.refresh_requested_at ? [] : [[isPr ? "submit" : "post", verb, "primary"]]), ["later", "Later"], ["skip", "Skip", "danger"]])}
   </div>`;
 }
 
@@ -562,7 +566,7 @@ function rowParts(it, group) {
   const title = b.title || it.title;
   let chips = "";
   if (group === "ready" || (group === "snoozed" && ["ready", "approved"].includes(it.status))) {
-    chips = `<span class="kind">${esc(KIND[it.kind || "pr"] || "Comment")}</span>${it.status === "approved" ? `<span class="st on">Approved</span>` : ""}`;
+    chips = `<span class="kind">${esc(KIND[it.kind || "pr"] || "Comment")}</span>${it.refresh_requested_at ? `<span class="st">Redrafting</span>` : it.status === "approved" ? `<span class="st on">Approved</span>` : ""}`;
     if (it.pairing) chips += `<span class="tag">Pairing</span>`;
   } else {
     chips = `${b.mode === "guide" ? `<span class="tag">You write it</span>` : b.difficulty ? `<span class="tag">${esc(b.difficulty)}</span>` : ""}${it.pairing ? `<span class="tag">Pairing</span>` : ""}${it.prepare_requested_at ? `<span class="st on">Requested</span>` : ""}`;
