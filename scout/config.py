@@ -66,6 +66,7 @@ def data_dir() -> Path:
     Locally this defaults to ./data (gitignored). In the cloud routine it points
     at the clone of the private oss-scout-data repo.
     """
-    d = Path(os.environ.get("SCOUT_DATA_DIR", ROOT / "data"))
+    # Absolute, so paths built from it still work after a subprocess changes cwd.
+    d = Path(os.environ.get("SCOUT_DATA_DIR", ROOT / "data")).resolve()
     d.mkdir(parents=True, exist_ok=True)
     return d
