@@ -218,6 +218,7 @@ def commit(work: Path, who: tuple[str, str], message: str, signoff: bool) -> Non
 
 
 def apply_patch(work: Path, patch: Path) -> None:
+    patch = patch.resolve()  # git runs inside work, so a relative path would miss
     try:
         git(["apply", "--index", str(patch)], work)
     except ActError:

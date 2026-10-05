@@ -1,6 +1,7 @@
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -157,6 +158,21 @@ def test_submit_falls_back_to_three_way_apply(env):
     env.git_fail = "apply --index"
     assert env.run() == 0
     assert [c[:2] for c in env.git_calls if c[0] == "apply"] == [["apply", "--index"], ["apply", "--3way"]]
+
+
+def test_submit_applies_the_patch_by_absolute_path(env, monkeypatch):
+    # The workflow sets SCOUT_DATA_DIR: ../data, but git apply runs inside the clone.
+    monkeypatch.chdir(env.data.parent)
+    env.data = Path(env.data.name)
+    assert env.run() == 0
+    patch = Path(next(c for c in env.git_calls if c[0] == "apply")[-1])
+    assert patch.is_absolute() and patch.exists()
+
+
+def test_data_dir_is_absolute(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCOUT_DATA_DIR", "data")
+    assert config.data_dir() == tmp_path.resolve() / "data"
 
 
 def test_submit_failure_goes_back_to_approved_and_can_retry(env):
