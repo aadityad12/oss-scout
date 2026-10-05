@@ -20,6 +20,7 @@ class Env:
         self.cfg = config.load()
         self.git_calls, self.posts = [], []
         self.git_fail = None       # substring of a git command that should fail
+        self.git_error = None      # what that failure says, if not the default
         self.remote_branch = ""    # what `git ls-remote` prints
         self.pulls, self.comments = [], []   # what GitHub already has: PRs from the owner's branch, comments
         self.reads = []
@@ -77,7 +78,7 @@ def env(tmp_path, monkeypatch):
     def fake_git(args, cwd=None):
         e.git_calls.append(args)
         if e.git_fail and e.git_fail in " ".join(args):
-            raise act.ActError(f"git {args[0]} failed: https://x-access-token:sekret@github.com/x")
+            raise act.ActError(e.git_error or f"git {args[0]} failed: https://x-access-token:sekret@github.com/x")
         return e.remote_branch if args[0] == "ls-remote" else ""
 
     def fake_read(path):
@@ -167,6 +168,45 @@ def test_submit_applies_the_patch_by_absolute_path(env, monkeypatch):
     assert env.run() == 0
     patch = Path(next(c for c in env.git_calls if c[0] == "apply")[-1])
     assert patch.is_absolute() and patch.exists()
+
+
+# what `git apply --3way` printed when fusioncore changed under a draft
+CONFLICT = ("git apply failed: Applied patch to '.github/workflows/ci.yml' with conflicts.\n"
+            "Applied patch to 'tools/rl_to_fusioncore.py' cleanly.\nFalling back to direct application...\n"
+            "U .github/workflows/ci.yml")
+
+
+def test_submit_on_a_patch_that_no_longer_fits_asks_for_a_redraft(env):
+    env.git_fail, env.git_error = "apply", CONFLICT
+    assert env.run() == 1
+    s = env.sugg()
+    assert s["status"] == "approved" and s["refresh_requested_at"] and "submitting_at" not in s
+    assert s["last_error"] == ("o/r changed since this was drafted, so the change no longer fits "
+                               ".github/workflows/ci.yml. Nothing was posted. The next nightly run "
+                               "will redraft it on top of the latest code.")
+    assert env.posts == [("fork", "o/r")]
+    assert "push" not in [c[0] for c in env.git_calls]
+    env.git_fail = None  # tapping again before the redraft is refused without touching GitHub
+    env.git_calls.clear()
+    refused(env, env.run(), "next nightly run will redraft it")
+    assert env.git_calls == []
+
+
+def test_misfit_names_each_file_git_could_not_fit():
+    out = ("error: patch failed: src/a.py:12\nerror: src/a.py: patch does not apply\n"
+           "error: tests/new_test.py: already exists in working directory\nU docs/b.md")
+    files = {next(g for g in m.groups() if g) for m in act.MISFIT.finditer(out)}
+    assert files == {"src/a.py", "tests/new_test.py", "docs/b.md"}
+
+
+def test_followup_patch_that_no_longer_fits_says_so(env):
+    env.add_followup({**SMALL, "pr_url": "https://github.com/o/r/pull/9"})
+    env.git_fail, env.git_error = "apply", CONFLICT
+    assert env.run("followup") == 1
+    s = env.sugg()
+    assert s["last_error"].startswith("The PR branch changed since this fix was drafted, so the change "
+                                      "no longer fits .github/workflows/ci.yml. Nothing was pushed")
+    assert env.posts == [] and "refresh_requested_at" not in s
 
 
 def test_data_dir_is_absolute(tmp_path, monkeypatch):

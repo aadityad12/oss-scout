@@ -362,3 +362,29 @@ def test_digest_pairing_lists_only_active_items(tmp_path):
         "o/r#3": {"status": "skipped", "pairing": True, "title": "c"},
     }
     assert [p["key"] for p in digest.build(config.load(), tmp_path, st, NOW)["pairing"]] == ["o/r#1"]
+
+
+def test_a_redrafted_patch_goes_back_to_ready_for_another_look(tmp_path):
+    write(tmp_path, good_briefing(ready=True), PR_JSON)
+    st = statemod.load(tmp_path)
+    briefings.ingest(tmp_path, st)
+    s = st["suggestions"]["o/r#7"]
+    s.update(status="approved", refresh_requested_at="2026-10-05T06:51:29+00:00", last_error="o/r changed")
+
+    write(tmp_path, good_briefing(ready=True, refreshed_at="2026-10-05T01:00:00+00:00"), PR_JSON)
+    briefings.ingest(tmp_path, st)  # a redraft from before the request doesn't count
+    assert s["status"] == "approved" and s["refresh_requested_at"]
+
+    write(tmp_path, good_briefing(ready=True, refreshed_at="2026-10-06T04:30:00+00:00"), PR_JSON)
+    briefings.ingest(tmp_path, st)
+    assert s["status"] == "ready" and "refresh_requested_at" not in s and "last_error" not in s
+    assert s["history"][-1]["from"] == "approved" and s["history"][-1]["to"] == "ready"
+
+
+def test_a_malformed_refreshed_at_is_ignored(tmp_path):
+    write(tmp_path, good_briefing(ready=True, refreshed_at="last night"), PR_JSON)
+    st = statemod.load(tmp_path)
+    briefings.ingest(tmp_path, st)
+    st["suggestions"]["o/r#7"]["refresh_requested_at"] = "2026-10-05T06:51:29+00:00"
+    briefings.ingest(tmp_path, st)
+    assert st["suggestions"]["o/r#7"]["refresh_requested_at"]
