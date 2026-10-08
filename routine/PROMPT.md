@@ -74,7 +74,7 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
    `base` branch named in `briefings/<slug>/pr.json`, at its current HEAD.
 2. Rebuild the patch: re-apply `briefings/<slug>/draft.patch` (`git apply --3way`, then
    fix by hand wherever the project changed nearby code) and rewrite `draft.patch` as a
-   `git diff` against that HEAD. Leave `pr.json` alone unless the base branch moved.
+   `git diff --full-index --binary` against that HEAD. Leave `pr.json` alone unless the base branch moved.
 3. Re-run the briefing's `tests.command` (the narrowest relevant tests). Never claim
    they passed if they didn't run.
 4. Edit the suggestion in `state.json` (keep the rest of the file unchanged):
@@ -212,7 +212,7 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
    each, in plain words (code words are fine here, jargon isn't).
 
    **Files for a ready item** (same folder):
-   - kind `pr`: `draft.patch` (`git diff` against the upstream default branch HEAD, ready
+   - kind `pr`: `draft.patch` (`git diff --full-index --binary` against the upstream default branch HEAD, ready
      to apply and commit; no unrelated changes) and `pr.json`:
      ```json
      {"title": "...", "body": "... Fixes #123 ...", "base": "<default branch>",

@@ -373,3 +373,25 @@ def test_the_track_command_names_drafts_to_send(world, monkeypatch, tmp_path):
     out_file.write_text("")
     cli.main(["track"])
     assert "send=" not in out_file.read_text()
+
+
+def test_check_prefetches_the_old_blobs_in_a_partial_clone(world, monkeypatch):
+    up = world.up
+    real_git = refresh._git
+
+    def no_lazy_apply(args, cwd=None, env=None):  # newer git fetches for --3way itself; the runners' git does not
+        return real_git(args, cwd, {**(env or {}), **({"GIT_NO_LAZY_FETCH": "1"} if args[0] == "apply" else {})})
+
+    monkeypatch.setattr(refresh, "_git", no_lazy_apply)
+    for key in ("allowFilter", "allowAnySHA1InWant"):
+        sh("config", f"uploadpack.{key}", "true", cwd=up.bare)
+    monkeypatch.setattr(refresh, "upstream_url", lambda repo: f"file://{up.bare}")
+    draft = world.data / "briefings" / briefings.slug(KEY) / "draft.patch"
+    sh("apply", "--index", str(draft), cwd=up.work)  # the same fix, but written with full blob ids
+    draft.write_text(sh("diff", "--cached", "--full-index", "--binary", cwd=up.work))
+    sh("reset", "--hard", cwd=up.work)
+    up.edit_line(13, "line 13 reworded upstream", "touch the context")
+    v = world.check()
+    assert v["same_fix"] is True and v["structural_ok"], v
+    new = (world.out / "new.patch").read_text()
+    assert "line 15 fixed" in new and len(refresh.preimage_ids(new)) == 1

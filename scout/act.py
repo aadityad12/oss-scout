@@ -82,10 +82,10 @@ def mask(text: str) -> str:
     return text.replace(token, "***") if token else text
 
 
-def git(args: list[str], cwd: Path | None = None) -> str:
+def git(args: list[str], cwd: Path | None = None, env: dict | None = None) -> str:
     log("git " + " ".join(args))
     proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
-                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0", **(env or {})})
     if proc.returncode:
         raise ActError(mask(f"git {args[0]} failed: {(proc.stderr or proc.stdout).strip()[-300:]}"))
     return proc.stdout
@@ -323,12 +323,30 @@ def commit(work: Path, who: tuple[str, str], message: str, signoff: bool) -> Non
          "commit", *(["-s"] if signoff else []), "-m", message], work)
 
 
-def apply_patch(work: Path, patch: Path) -> None:
+def prefetch_preimages(work: Path, patch: Path, remote: str) -> None:
+    """Download the patch's missing preimage blobs. A blob:none clone has only the blobs of the
+    commits it checked out, and `git apply --3way` does not fetch lazily. If the fetch fails the
+    3-way attempt just fails with its usual message."""
+    missing = []
+    for blob in refreshmod.preimage_ids(patch.read_text(errors="replace")):
+        try:
+            git(["cat-file", "-e", blob], work, {"GIT_NO_LAZY_FETCH": "1"})
+        except ActError:
+            missing.append(blob)
+    if missing:
+        try:
+            git(["fetch", "--no-tags", "--filter=blob:none", remote, *missing], work)
+        except ActError as e:
+            log(f"could not fetch {len(missing)} older file version(s) for the 3-way apply: {e}")
+
+
+def apply_patch(work: Path, patch: Path, remote: str = "upstream") -> None:
     patch = patch.resolve()  # git runs inside work, so a relative path would miss
     try:
         git(["apply", "--index", str(patch)], work)
     except ActError:
         try:
+            prefetch_preimages(work, patch, remote)
             git(["apply", "--3way", str(patch)], work)
         except ActError as e:
             raise PatchError(str(e)) from e
@@ -539,7 +557,7 @@ def followup(job: Job) -> dict:
             with tempfile.TemporaryDirectory() as tmp:
                 work = Path(tmp) / "repo"
                 clone(fork, work, branch)
-                apply_patch(work, patch)
+                apply_patch(work, patch, "origin")
                 commit(work, who, message, False)
                 git(["push", "origin", f"HEAD:refs/heads/{branch}"], work)
             s["followup_pushed"] = rel

@@ -1,11 +1,14 @@
 import json
+import os
+from pathlib import Path
 import re
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from scout import act, briefings, config, datarepo, digest, ghwrite, render, state as statemod, track, wip
+from scout import act, refresh, briefings, config, datarepo, digest, ghwrite, render, state as statemod, track, wip
 from scout.github import NotFound
 from test_ready import PR_JSON, SMALL, DISCUSS, good_briefing, write
 
@@ -78,7 +81,7 @@ def env(tmp_path, monkeypatch):
     e.save(st)
     assert st["suggestions"][KEY]["status"] == "ready"
 
-    def fake_git(args, cwd=None):
+    def fake_git(args, cwd=None, env=None):
         e.git_calls.append(args)
         if e.git_fail and e.git_fail in " ".join(args):
             raise act.ActError(f"git {args[0]} failed: https://x-access-token:sekret@github.com/x")
@@ -1167,3 +1170,119 @@ def test_cli_dry_run(env, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["act", "--key", KEY, "--action", "submit", "--dry-run"])
     assert e.value.code == 0 and '"dry_run": true' in capsys.readouterr().out
+
+
+# -- apply_patch in a blob:none clone, with real git --------------------------
+
+def sh(*args, cwd=None):
+    out = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+                         cwd=cwd, check=True, capture_output=True, text=True)
+    return out.stdout
+
+
+FULL = "a" * 40
+SHA256 = "b" * 64
+
+
+def test_preimage_ids_reads_the_old_side_of_index_lines():
+    patch = (f"diff --git a/x b/x\nindex {FULL}..{'c' * 40} 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
+             f"diff --git a/y b/y\nindex {SHA256}..{'d' * 64}\n--- a/y\n+++ b/y\n@@ -1 +1 @@\n-a\n+b\n"
+             f"diff --git a/x2 b/x2\nindex {FULL}..{'e' * 40} 100644\n")  # a repeat is listed once
+    assert refresh.preimage_ids(patch) == [FULL, SHA256]
+
+
+def test_preimage_ids_skips_abbreviated_ids_and_new_files():
+    patch = ("diff --git a/x b/x\nindex 1a2b3c4..5d6e7f8 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
+             f"diff --git a/new b/new\nnew file mode 100644\nindex {'0' * 40}..{'f' * 40}\n--- /dev/null\n+++ b/new\n"
+             f"diff --git a/new2 b/new2\nnew file mode 100644\nindex {'0' * 64}..{'f' * 64}\n"
+             f"diff --git a/ok b/ok\nindex {FULL}..{'c' * 40} 100644\n")
+    assert refresh.preimage_ids(patch) == [FULL]
+    assert refresh.preimage_ids("+index " + FULL + ".." + FULL + "\nnot an index line\n") == []
+
+
+def test_preimage_ids_handles_binary_patches():
+    patch = (f"diff --git a/logo.png b/logo.png\nindex {FULL}..{'c' * 40} 100644\nGIT binary patch\nliteral 3\nKcmZQz0000\n\n"
+             f"literal 0\nHcmV?d00001\n\n"
+             f"diff --git a/new.bin b/new.bin\nnew file mode 100644\nindex {'0' * 40}..{'c' * 40}\nGIT binary patch\n"
+             f"literal 3\nKcmZQz0000\n\nliteral 0\nHcmV?d00001\n\n")
+    assert refresh.preimage_ids(patch) == [FULL]
+
+
+class Partial:
+    """A bare 'upstream' with a patch made on commit A and a partial clone sitting on newer commit B."""
+
+    def __init__(self, tmp: Path, full_index: bool = True):
+        self.bare, self.src, self.work = tmp / "up.git", tmp / "src", tmp / "clone"
+        sh("init", "--bare", "-b", "main", str(self.bare))
+        sh("config", "uploadpack.allowFilter", "true", cwd=self.bare)
+        sh("config", "uploadpack.allowAnySHA1InWant", "true", cwd=self.bare)
+        sh("clone", str(self.bare), str(self.src))
+        self.lines = [f"line {i}\n" for i in range(1, 31)]
+        self.write("A")
+        self.old_blob = sh("rev-parse", "HEAD:code.py", cwd=self.src).strip()
+        fixed = list(self.lines)
+        fixed[16] = "line 17 fixed\n"
+        (self.src / "code.py").write_text("".join(fixed))
+        self.patch = tmp / "draft.patch"
+        self.patch.write_text(sh("diff", *(["--full-index"] if full_index else []), "--binary", cwd=self.src))
+        self.lines[14] = "line 15 reworded upstream\n"  # inside the fix's 3 context lines
+        self.write("B")
+        self.url = f"file://{self.bare}"
+
+    def write(self, msg):
+        (self.src / "code.py").write_text("".join(self.lines))
+        sh("add", "-A", cwd=self.src)
+        sh("commit", "-m", msg, cwd=self.src)
+        sh("push", "origin", "main", cwd=self.src)
+
+    def clone_as_submit_does(self):
+        """What `submit` leaves behind: a blob:none clone with upstream fetched as a promisor remote."""
+        sh("clone", "--filter=blob:none", self.url, str(self.work))
+        for args in (["remote", "add", "upstream", self.url], ["config", "remote.upstream.promisor", "true"],
+                     ["config", "remote.upstream.partialclonefilter", "blob:none"],
+                     ["fetch", "--filter=blob:none", "--no-tags", "upstream", "main"],
+                     ["checkout", "--no-track", "-b", "fix", "upstream/main"]):
+            sh(*args, cwd=self.work)
+        return self.work
+
+    def has(self, blob):
+        env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+        return subprocess.run(["git", "cat-file", "-e", blob], cwd=self.work, env=env).returncode == 0
+
+
+@pytest.fixture
+def no_lazy_fetch(monkeypatch):
+    # Newer git lets `apply --3way` fetch missing blobs itself; the git on the runners does not.
+    return lambda: monkeypatch.setenv("GIT_NO_LAZY_FETCH", "1")  # call after the clone: its checkout needs lazy fetch
+
+
+def test_apply_patch_fetches_the_preimage_blobs_for_a_three_way_apply(tmp_path, no_lazy_fetch):
+    p = Partial(tmp_path)
+    work = p.clone_as_submit_does()
+    no_lazy_fetch()
+    assert not p.has(p.old_blob)  # the clone never downloaded the version the patch was made on
+    plain = subprocess.run(["git", "apply", "--check", str(p.patch)], cwd=work, capture_output=True, text=True)
+    assert plain.returncode  # the context moved, so only a 3-way merge can apply it
+    raw = subprocess.run(["git", "apply", "--3way", str(p.patch)], cwd=work, capture_output=True, text=True)
+    assert raw.returncode and "lacks the necessary blob" in raw.stderr  # the production failure
+    act.apply_patch(work, p.patch)
+    text = (work / "code.py").read_text()
+    assert "line 17 fixed" in text and "line 15 reworded upstream" in text
+    assert p.has(p.old_blob) and "M  code.py" in sh("status", "--short", cwd=work)
+
+
+def test_apply_patch_without_full_ids_has_nothing_to_prefetch(tmp_path, no_lazy_fetch):
+    p = Partial(tmp_path, full_index=False)
+    work = p.clone_as_submit_does()
+    no_lazy_fetch()
+    with pytest.raises(act.PatchError, match="lacks the necessary blob"):
+        act.apply_patch(work, p.patch)
+
+
+def test_apply_patch_goes_on_to_three_way_when_the_fetch_fails(tmp_path, no_lazy_fetch):
+    p = Partial(tmp_path)
+    work = p.clone_as_submit_does()
+    no_lazy_fetch()
+    sh("remote", "set-url", "upstream", str(tmp_path / "nowhere.git"), cwd=work)
+    with pytest.raises(act.PatchError, match="lacks the necessary blob"):
+        act.apply_patch(work, p.patch)

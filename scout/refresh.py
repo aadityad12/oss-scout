@@ -87,9 +87,36 @@ def same_shape(old: str, new: str) -> str | None:
     return None
 
 
-def _git(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _git(args: list[str], cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=600,
-                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0", **(env or {})})
+
+
+INDEX_LINE = re.compile(r"^index ([0-9a-f]+)\.\.[0-9a-f]+(?: \d+)?$", re.M)
+
+
+def preimage_ids(patch: str) -> list[str]:
+    """Full blob ids a patch was made against (the old side of its `index` lines), in order, once each.
+
+    Abbreviated ids (patches made without --full-index) and the all-zero id of a new file are skipped.
+    """
+    seen: dict[str, None] = {}
+    for old in INDEX_LINE.findall(patch):
+        if len(old) in (40, 64) and old.strip("0"):
+            seen.setdefault(old)
+    return list(seen)
+
+
+def prefetch_preimages(work: Path, patch: str, remote: str) -> None:
+    """Download the patch's missing preimage blobs, so `git apply --3way` works in a blob:none clone.
+
+    `git apply --3way` never fetches lazily, so it fails on "lacks the necessary blob". A failed fetch
+    is not an error here: the 3-way attempt that follows fails with the usual message.
+    """
+    missing = [i for i in preimage_ids(patch)
+               if _git(["cat-file", "-e", i], work, {"GIT_NO_LAZY_FETCH": "1"}).returncode]
+    if missing:
+        _git(["fetch", "--no-tags", "--filter=blob:none", remote, *missing], work)
 
 
 def _run_tests(command: str, cwd: Path, timeout: int) -> tuple[str, str]:
@@ -131,13 +158,14 @@ def check(data: Path, key: str, out: Path, phase: str = "all", run_tests: bool =
         if cloned.returncode:
             raise RefreshError(f"could not clone {repo}: {cloned.stderr.strip()[-200:]}")
         verdict["head"] = _git(["rev-parse", "HEAD"], work).stdout.strip()
+        prefetch_preimages(work, old, "origin")
         applied = _git(["apply", "--3way", str((folder / "draft.patch").resolve())], work)
         if applied.returncode:
             hit = [f for f in verdict["files_before"] if f in applied.stderr] or verdict["files_before"]
             verdict["reason"] = f"the saved change conflicts with newer code in {', '.join(hit[:3])}"
             verdict["conflicts"] = hit
         else:
-            new = _git(["diff", "--cached", "--no-color"], work).stdout
+            new = _git(["diff", "--cached", "--no-color", "--full-index", "--binary"], work).stdout
             verdict.update(files_after=patch_files(new), lines_after=changed_lines(new))
             if phase in ("apply", "all"):
                 (out / "new.patch").write_text(new)
