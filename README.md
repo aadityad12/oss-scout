@@ -23,7 +23,8 @@ The tap is the point: a person looked at this and stands behind it.
 | --- | --- | --- |
 | about 9pm | **Scan**: finds and ranks issues, refreshes your PR and review history. No AI. | GitHub Actions in this repo (`nightly.yml`; GitHub often starts it hours late) |
 | right after the scan | **Routine**: a Claude cloud routine prepares at most one *ready* item plus up to two briefings, and drafts replies to reviews waiting on you. | Claude routines, started by the scan |
-| 8am | **Email**: what's ready, what's waiting on you, what's new. Sent only when there is something to say. | Cloudflare Worker cron |
+| 8am | **Email**: what couldn't send, what's ready to send, and any maintainer reply. Each item leads with three plain lines (what's broken, what you'd send, what you do and how long) and has one button. Sent only when there is something for you to do; laptop briefings are left out. | Cloudflare Worker cron |
+| Saturday 8am | **Weekly email**, "Worth doing on your laptop this week": the last week's briefings that need a laptop session, with the same three lines. Not sent when there are none. | Cloudflare Worker cron |
 | whenever you tap | **Act**: does the GitHub write you approved, as you. | `act.yml` in the data repo, started by the Worker |
 
 ```mermaid
@@ -52,14 +53,16 @@ flowchart LR
 
 A quiet morning is normal: zero ready items is a fine night.
 
+**When a send fails**, the item stays on the page with a plain reason (the project changed the same files, your GitHub key needs a permission, someone else sent a fix, and so on), a "refresh by" date, and the email's first section says the same. If the project moved on, tap **Refresh & send**: a job with no secrets tries your saved change on the project's current code and runs its tests, and if it is still the same fix the PR goes out. If not, the Claude routine rebuilds that one item, and the PR goes out within about three hours only if the fix itself is unchanged; otherwise the card asks you to read the new diff. Past the refresh-by date, or after two failed refreshes, it becomes a briefing for your laptop and its slot is freed.
+
 ## When to use `/contribute` on the laptop
 
 Run `/contribute` in a Claude Code session in this repo for the things that shouldn't be one tap:
 
-- **Guide-mode projects** (DuckDB and others that ban AI-written code). The scout writes no code there. It explains the problem and you write the fix.
+- **Pair projects** (`mode: pair`: DuckDB, llama.cpp and f3d allow AI-assisted code but want posts, replies and the PR body in your own words, and no autonomous agents). The scout does the root-causing and a fix plan, never a patch. In `/contribute`, Claude starts the build, explains the bug, writes the fix and test in small steps for you to steer, quizzes you with three questions, and gives you bullet facts. You write the claim comment and PR body.
+- **Own projects** (`mode: own`: the project bans AI-written code). You write the code; Claude explains and reviews.
 - **Discuss follow-ups**: a reviewer asks *why*, and you want to think it through.
 - Any suggestion you want to pair on instead of sending as prepared.
-- Projects that allow AI-assisted code but not AI-written posts (llama.cpp): the claim comment is bullet points for you to write yourself.
 
 It loads the briefing, reuses one local clone per project, and prepares the commit and PR for you to approve and send under your own name.
 
@@ -73,7 +76,8 @@ It loads the briefing, reuses one local clone per project, and prepares the comm
 ## One-time setup checklist
 
 - [ ] **Secrets in `oss-scout`** (public repo): `DATA_REPO_TOKEN`, `ROUTINE_FIRE_URL`, `ROUTINE_TOKEN` (already set).
-- [ ] **`SUBMIT_TOKEN` in `oss-scout-data`** (Settings, Secrets and variables, Actions): a *classic* personal access token with only the `public_repo` scope, created on your account. It's the only place this token lives. The routine never sees it.
+- [ ] **`SUBMIT_TOKEN` in `oss-scout-data`** (Settings, Secrets and variables, Actions): a *classic* personal access token with the `public_repo` scope, plus `workflow` so it can send changes under `.github/workflows/`. Created on your account. It's the only place this token lives. The routine never sees it. A missing `workflow` permission is caught before anything is cloned and shown on the card.
+- [ ] **`ROUTINE_FIRE_URL` and `ROUTINE_TOKEN` in `oss-scout-data`** too (the same two values as in `oss-scout`'s secrets): Refresh & send uses them to start the routine for one item when the automatic check can't tell it is the same fix. Without them the rebuild waits for the next nightly run.
 - [ ] **Rotate it every 90 days**: make a new token, replace the secret, then set `[submit] token_rotated` in `targets.toml` to today. The email and dashboard warn after 80 days.
 - [ ] **Install the workflow**: in a checkout of the data repo's **default branch, `main`**, run `SCOUT_DATA_DIR=<that checkout> python3 -m scout init-data`, then commit and push `.github/workflows/act.yml` along with the `.claude/` files (`workflow_dispatch` only finds workflows on the default branch). Re-run it after changing `scout/datarepo.py`.
 - [ ] **Worker**: follow [`worker/README.md`](worker/README.md) (Cloudflare Access app, a fine-grained token limited to `oss-scout-data`, `npx wrangler deploy`, two secrets, Resend).
@@ -86,7 +90,7 @@ The routine runs unattended and reads text written by strangers, so it is boxed 
 
 - **The routine can't write to GitHub.** `guard/guard.py` is a Claude Code `PreToolUse` hook that blocks every GitHub write (`gh pr/issue create|comment|review|merge`, `gh api` with a write method or body, `curl` writes, remote rewrites) and every `git push` except one branch of the private data repo. It is unchanged. 37 tests in `tests/test_guard.py`. Cloud sessions honor a repo's hooks only when the session has a single repository, so the routine opens only the data repo and clones this one read-only.
 - **The only writer is `act.yml`**, and only your tap starts it: Cloudflare Access (your email only) guards the dashboard, the Worker checks the Access token again, rejects cross-site requests and accepts only a fixed list of actions. Its token, `SUBMIT_TOKEN`, exists only in the data repo's secrets.
-- **Every action is re-checked before anything is written** (`scout/act.py`): the item exists and has the right status, the briefing still validates, guide-mode and "no AI-written posts" projects are refused, the repo and branch names are sane, your open-PR limits still hold, and edited text has no AI markers and still has the required disclosure sentence. `--dry-run` shows what would happen.
+- **Every action is re-checked before anything is written** (`scout/act.py`): the item exists and has the right status, the briefing still validates, pair and own projects (and the legacy `guide`, read as `pair`) and "no AI-written posts" projects are refused, the repo and branch names are sane, your open-PR limits still hold, and edited text has no AI markers and still has the required disclosure sentence. `--dry-run` shows what would happen.
 - **No AI markers anywhere you post**: no `Co-Authored-By`, "Generated with", robot emoji or tool names in commits, PR text, comments or branch names. Commits use your name and your GitHub noreply address, with no trailers except `Signed-off-by` when a project requires DCO.
 - **Disclosure is explicit.** When a project requires it, exactly one plain sentence in your voice goes in the PR body; it is never ticked or filled any other way.
 - **Stranger text is data.** The prompt treats issue text as data, and the dashboard escapes or sanitizes everything it shows.
@@ -102,11 +106,11 @@ The routine runs on **Sonnet** and does the triage, drafting and briefings itsel
 ## How the scan works
 
 1. **Scan** (`python -m scout run`, no LLM). Collects open, unassigned issues labelled beginner-friendly, help-wanted, bounty or confirmed-bug from a tiered list of projects, plus open search across GitHub at a lower weight.
-2. **Measure each project** from its recent history: of the last 300 closed PRs by occasional outside contributors (from forks, by people with fewer than three recent PRs), the merge rate, median days to merge and median time to a maintainer's first reply. It also reads CONTRIBUTING and AI-policy files for AI rules and CLA requirements. This becomes a 0-100 *friendliness* score.
+2. **Measure each project** from its recent history: of the last 300 closed PRs by occasional outside contributors (from forks, by people with fewer than three recent PRs), the merge rate, median days to merge and median time to a maintainer's first reply. It also reads CONTRIBUTING and AI-policy files for AI rules (`draft`, `pair` or `own`, see above) and CLA requirements. This becomes a 0-100 *friendliness* score.
 3. **Filter** anything already claimed (linked open PRs, recent "I'll take this" comments, assignees, blocking labels).
 4. **Skip** issues already suggested, and for 60 days any the routine or you turned down.
 5. **Rank** by friendliness, freshness, label fit, language fit, project tier and your history with the project.
-6. **Prepare.** The routine picks, reproduces and drafts where it can, and writes the briefing and, for the ready item, the files `act` uses. Work in flight is limited (`max_open_prs`, `max_open_prs_per_repo`, one ready item at a time).
+6. **Prepare.** The routine picks, reproduces and drafts where it can, and writes the briefing and, for the ready item, the files `act` uses. Work in flight is limited (`max_open_prs`, `max_open_prs_per_repo`, and `max_unsent` prepared items, new or failed, waiting to be sent).
 7. **Track** what you actually did, read from GitHub, never self-reported: `suggested → claimed → pr_open → waiting_on_you → merged`; prepared items go `ready → approved → submitting → pr_open` (or `posted`).
 
 ## Commands
@@ -121,6 +125,8 @@ python3 -m scout render        # build data/dashboard.html
 python3 -m scout render-public # build the public page
 python3 -m scout init-data     # install guard, settings and act.yml into the data dir
 python3 -m scout act --key owner/repo#123 --action submit --dry-run   # what a tap would do
+python3 -m scout act --key owner/repo#123 --action refresh --dry-run  # would a refresh be the same fix? (no tests run)
+python3 -m scout refresh-check --key owner/repo#123 --out /tmp/out        # the workflow's no-secrets check
 ```
 
 `SCOUT_DATA_DIR` points at the data directory (default `./data`). Standard library only, Python 3.11+. Reads use `gh api` when the GitHub CLI is available and fall back to `GH_TOKEN`; REST only, because the cloud GitHub proxy blocks most GraphQL. Writes live only in `scout/ghwrite.py`.

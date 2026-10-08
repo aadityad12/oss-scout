@@ -68,7 +68,7 @@ From the repo root, in a checkout of the data repo's `main` branch:
 SCOUT_DATA_DIR=/path/to/oss-scout-data python3 -m scout init-data
 ```
 
-Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also writes) to `main`. Then in the data repo, **Settings**, **Secrets and variables**, **Actions**, add `SUBMIT_TOKEN`: a classic token with only the `public_repo` scope.
+Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also writes) to `main`. Then in the data repo, **Settings**, **Secrets and variables**, **Actions**, add `SUBMIT_TOKEN`: a classic token with the `public_repo` scope, plus `workflow` if you want it to send changes under `.github/workflows/`. Also add `ROUTINE_FIRE_URL` and `ROUTINE_TOKEN` there (the same values as in the `oss-scout` repo's secrets): the **Refresh & send** button uses them to start the Claude routine for a single item when the automatic check can't tell it is the same fix. Without them it logs "Routine trigger not configured" and the rebuild waits for the next nightly run.
 
 ### 7. Check it
 
@@ -82,6 +82,7 @@ Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also w
 - **Timing**: the cron `0 15 * * *` is 8am Pacific in summer and 7am in winter; edit `wrangler.toml` if you mind.
 - **Review check**: the cron `0 */3 * * *` (every 3 hours, on the hour, UTC) starts the data repo's `track.yml`, which looks for reviewer replies and rewrites `alerts.json`. The fine-grained token's **Actions: Read and write** already covers starting `track.yml`; no new permission is needed. The data repo must have `track.yml` on `main`.
 - **Review alerts**: the cron `30 */3 * * *` reads `alerts.json` half an hour later and emails you ("Reviewer replied on owner/repo#123", or "N reviewers replied") with a link to each item on the dashboard. It sends only if there is at least one alert, `alerts.json` was generated within the last 3 hours (a failed check never re-sends old news), and it is not quiet hours: 23:00 to 07:00 Pacific, daylight saving handled. Replies that arrive in quiet hours are not emailed on their own; the 8am email covers them.
+- **Saturday email**: the cron `10 15 * * SAT` (15:10 UTC, 8:10am Pacific in summer) sends "Worth doing on your laptop this week" from the digest's `weekly` list: briefings from the last 7 days that need a laptop session. It sends only if the list is not empty and the digest is from today.
 - **Changing a cron**: `src/index.js` picks the job by the exact cron string, so edit the string in `wrangler.toml` and in `CRONS` in `src/index.js` together (a test checks they agree).
 - **Rotating the GitHub token**: generate a new one, `npx wrangler secret put GITHUB_TOKEN`.
 - **Tests**: `cd worker && node --test`.
@@ -90,5 +91,5 @@ Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also w
 
 - Every request needs a valid Cloudflare Access token for your email (checked again here, not just at the edge).
 - `GET /` serves `dashboard.html` from the data repo, `GET /api/runs` lists the last five `act.yml` runs.
-- `POST /api/act` needs `content-type: application/json` and an `Origin` of `https://me.aadityad.dev`. `action` must be one of `submit`, `post`, `followup`, `approve`, `later`, `skip`, `prepare`, `pair`, `unpair`, `feature`, `unfeature`, `summary`; `key` must look like `owner/repo#123`; the title is at most 256 characters and the text at most 60000 (GitHub caps workflow inputs at 65,535 characters in total, so in practice about 45,000). `prepare`, `pair`, `unpair`, `feature` and `unfeature` ignore the title and text. `summary` takes the impact line as the text: required, at most 200 characters, one line; an empty string removes it.
+- `POST /api/act` needs `content-type: application/json` and an `Origin` of `https://me.aadityad.dev`. `action` must be one of `submit`, `post`, `followup`, `approve`, `later`, `skip`, `prepare`, `pair`, `unpair`, `feature`, `unfeature`, `summary`, `refresh`; `key` must look like `owner/repo#123`; the title is at most 256 characters and the text at most 60000 (GitHub caps workflow inputs at 65,535 characters in total, so in practice about 45,000). `prepare`, `pair`, `unpair`, `feature`, `unfeature` and `refresh` ignore the title and text. `summary` takes the impact line as the text: required, at most 200 characters, one line; an empty string removes it.
 - It never writes to GitHub itself. It only starts the workflow.

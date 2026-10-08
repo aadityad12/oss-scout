@@ -1,0 +1,15 @@
+{
+  "manankharwar/fusioncore#161": {
+    "headline": "Add tests to the robot-config converter and stop it crashing on empty files",
+    "plain_problem": "A script that converts robot configs into FusionCore configs has no tests, and it crashes with a confusing error on empty files.",
+    "files_explained": [
+      ".github/workflows/ci.yml: runs the new tests automatically on every change, next to the project's other checks",
+      "tools/rl_to_fusioncore.py: instead of crashing with a confusing error, it now says clearly when the input file is empty or isn't valid",
+      "tools/test_rl_to_fusioncore.py: a new file with 9 tests that run the converter on small sample configs, including empty and broken ones"
+    ]
+  },
+  "duckdb/duckdb#26144": {
+    "headline": "Stop a prepared query that uses a sequence from breaking the whole session",
+    "plain_problem": "Asking DuckDB to prepare a query that takes a number from a sequence breaks the whole session, and every later query fails until you restart it."
+  }
+}

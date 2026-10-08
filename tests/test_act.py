@@ -1,11 +1,14 @@
 import json
+import os
+from pathlib import Path
 import re
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from scout import act, briefings, config, datarepo, digest, ghwrite, render, state as statemod, track, wip
+from scout import act, refresh, briefings, config, datarepo, digest, ghwrite, render, state as statemod, track, wip
 from scout.github import NotFound
 from test_ready import PR_JSON, SMALL, DISCUSS, good_briefing, write
 
@@ -23,6 +26,10 @@ class Env:
         self.remote_branch = ""    # what `git ls-remote` prints
         self.pulls, self.comments = [], []   # what GitHub already has: PRs from the owner's branch, comments
         self.reads = []
+        self.token = (200, {"public_repo"})   # what GET user says about the key: (status, scopes)
+        self.commits = []          # upstream commits any path lookup returns
+        self.issue = {"state": "open"}
+        self.timeline = []
 
     def load(self):
         return statemod.load(self.data)
@@ -74,7 +81,7 @@ def env(tmp_path, monkeypatch):
     e.save(st)
     assert st["suggestions"][KEY]["status"] == "ready"
 
-    def fake_git(args, cwd=None):
+    def fake_git(args, cwd=None, env=None):
         e.git_calls.append(args)
         if e.git_fail and e.git_fail in " ".join(args):
             raise act.ActError(f"git {args[0]} failed: https://x-access-token:sekret@github.com/x")
@@ -84,6 +91,12 @@ def env(tmp_path, monkeypatch):
         e.reads.append(path)
         if "/pulls?head=" in path:
             return e.pulls
+        if "/commits?" in path:
+            return e.commits
+        if path == "repos/o/r/issues/7":
+            return e.issue
+        if "/issues/7/timeline" in path:
+            return e.timeline
         if "/comments?per_page=100" in path:
             return e.comments
         if path == "users/aadityad12":
@@ -107,6 +120,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(act, "git", fake_git)
     monkeypatch.setattr(act, "read", fake_read)
     monkeypatch.setattr(act.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ghwrite, "token_scopes", lambda token=None: e.token)
     monkeypatch.setattr(ghwrite, "fork", poster("fork", {"full_name": "aadityad12/r"}))
     monkeypatch.setattr(ghwrite, "create_pr", poster("pr", {"html_url": "https://github.com/o/r/pull/9"}))
     monkeypatch.setattr(ghwrite, "comment", poster("comment", {"html_url": "https://github.com/o/r/issues/7#c1"}))
@@ -217,7 +231,9 @@ def test_dry_run_changes_nothing_and_prints_the_plan(env, capsys):
 
 
 @pytest.mark.parametrize("name,setup,needle", [
-    ("guide mode", lambda e: e.edit_briefing(mode="guide"), "guide mode"),
+    ("legacy guide mode", lambda e: e.edit_briefing(mode="guide"), "pair mode"),
+    ("pair mode", lambda e: e.edit_briefing(mode="pair"), "pair mode"),
+    ("own mode", lambda e: e.edit_briefing(mode="own"), "own mode"),
     ("posts forbidden", lambda e: e.edit_briefing(ai_posts_forbidden=True), "forbids AI-written posts"),
     ("not marked ready", lambda e: e.edit_briefing(ready=False), "not marked ready"),
     ("wrong status", lambda e: e.set_status("pr_open"), "status is pr_open"),
@@ -516,7 +532,7 @@ def test_snoozed_items_do_not_block_new_ready_items_or_the_digest(env):
     now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
     st = env.load()
     st["suggestions"][KEY]["snoozed_until"] = "2026-10-04T00:00:00+00:00"
-    settings = {"max_ready": 1, "max_open_prs": 3, "max_open_prs_per_repo": 1}
+    settings = {"max_ready": 1, "max_open_prs": 3, "max_open_prs_per_repo": 1, "max_unsent": 1}
     assert wip.compute(st, settings, now)["ready_allowed"]
     assert digest.build(env.cfg, env.data, st, now)["ready"] == []
     st["suggestions"][KEY]["snoozed_until"] = "2026-10-01T00:00:00+00:00"
@@ -673,6 +689,244 @@ def test_cli_accepts_the_new_actions(env, monkeypatch, tmp_path, capsys):
     assert e.value.code == 1  # no such PR, but the action is known
 
 
+# -- failure records ----------------------------------------------------------
+
+WORKFLOW_PATCH = """diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -1,2 +1,3 @@
+ steps:
++  - run: new test
+   - run: a
+"""
+OCT_5 = [{"sha": "abc", "commit": {"committer": {"date": "2026-10-05T12:00:00Z"}}}]
+TIMELINE_PR = {"event": "cross-referenced", "source": {"issue": {
+    "pull_request": {"url": "https://api.github.com/repos/o/r/pulls/50"}, "state": "open", "html_url": "https://github.com/o/r/pull/50", "user": {"login": "other"}}}}
+FIELDS = {"code", "plain", "why", "fix_action", "refresh_by", "at"}
+
+
+def set_patch(env, text=WORKFLOW_PATCH):
+    (env.data / "briefings" / briefings.slug(KEY) / "draft.patch").write_text(text)
+
+
+def failure_of(env):
+    f = env.sugg()["failure"]
+    assert set(f) == FIELDS and f["at"] and "sekret" not in json.dumps(f)
+    return f
+
+
+def test_a_patch_that_no_longer_applies_says_what_moved_and_when(env):
+    set_patch(env)
+    env.token = (200, {"public_repo", "workflow"})
+    env.commits = OCT_5
+    env.git_fail = "apply"
+    assert env.run() == 1
+    s = env.sugg()
+    assert s["status"] == "approved" and "last_error" in s and "sekret" not in s["last_error"]
+    f = failure_of(env)
+    assert f["code"] == "upstream_moved" and f["fix_action"] == "refresh"
+    assert f["plain"] == "Couldn't send: r changed ci.yml on Oct 5, after this draft was written."
+    assert "ci.yml" in f["why"] and "Oct 5" in f["why"]
+    assert f["refresh_by"] == (datetime.fromisoformat(f["at"]).date() + timedelta(days=14)).isoformat()  # one commit: 15 // 1, capped at 14
+    paths = [p for p in env.reads if "/commits?" in p]
+    assert any("per_page=1" in p and "path=.github%2Fworkflows%2Fci.yml" in p and "sha=main" in p for p in paths)
+    assert any("since=" in p for p in paths)  # the 30-day count
+    assert env.posts == [("fork", "o/r")]
+    env.git_fail = None
+    assert env.run() == 0
+    s = env.sugg()
+    assert s["status"] == "pr_open" and "failure" not in s and "last_error" not in s  # success clears it
+
+
+def test_busy_projects_get_a_shorter_refresh_window(env):
+    set_patch(env)
+    env.commits = [{"sha": str(i), "commit": {"committer": {"date": "2026-10-05T12:00:00Z"}}} for i in range(5)]
+    env.git_fail = "apply"
+    env.run()
+    f = failure_of(env)
+    assert f["refresh_by"] == (datetime.fromisoformat(f["at"]).date() + timedelta(days=3)).isoformat()  # 15 // 5
+
+
+def test_a_missing_key_permission_is_caught_before_anything_is_cloned(env):
+    set_patch(env)
+    env.token = (200, {"public_repo"})
+    assert env.run() == 1
+    assert env.git_calls == [] and env.posts == []  # no fork either
+    s = env.sugg()
+    assert s["status"] == "approved"
+    f = failure_of(env)
+    assert (f["code"], f["fix_action"]) == ("token_scope", "token")
+    assert f["plain"] == "Your GitHub key is missing the 'workflow' permission this change needs."
+    env.token = (200, {"public_repo", "workflow"})
+    assert env.run() == 0 and "failure" not in env.sugg()
+
+
+def test_the_scope_check_only_matters_for_workflow_files_and_classic_keys(env):
+    assert env.run() == 0  # a plain patch needs no workflow permission
+    env.set_status("approved")
+    set_patch(env)
+    env.token = (200, None)  # fine-grained keys send no scopes header: can't tell, so go ahead
+    assert env.run() == 0
+
+
+def test_a_rejected_key_is_token_expired(env):
+    env.token = (401, None)
+    assert env.run() == 1
+    assert env.git_calls == [] and env.posts == []
+    f = failure_of(env)
+    assert (f["code"], f["fix_action"]) == ("token_expired", "token") and "expired" in f["plain"]
+
+
+def test_a_401_from_github_later_on_is_token_expired(env, monkeypatch):
+    monkeypatch.setattr(ghwrite, "create_pr", env.poster("pr", ghwrite.WriteError("GitHub said 401 for POST repos/o/r/pulls: Bad credentials")))
+    assert env.run() == 1
+    assert env.sugg()["status"] == "approved" and failure_of(env)["code"] == "token_expired"
+
+
+def test_the_token_is_never_printed_by_the_scope_check(env, capsys):
+    env.token = (401, None)
+    env.run()
+    out = capsys.readouterr()
+    assert "sekret" not in out.out + out.err
+
+
+def test_a_closed_issue_or_someone_elses_open_pr_is_taken(env):
+    env.issue = {"state": "closed"}
+    assert env.run() == 1
+    assert env.sugg()["status"] == "ready" and env.git_calls == [] and env.posts == []
+    f = failure_of(env)
+    assert (f["code"], f["fix_action"]) == ("taken", "skip") and "closed" in f["plain"]
+    refused(env, env.run(), "closed")
+    env.issue = {"state": "open"}
+    env.timeline = [TIMELINE_PR]
+    assert env.run() == 1
+    f = failure_of(env)
+    assert f["code"] == "taken" and "someone else" in f["plain"] and "pull/50" in f["why"]
+    env.timeline = [{**TIMELINE_PR, "source": {"issue": {**TIMELINE_PR["source"]["issue"], "user": {"login": "aadityad12"}}}}]
+    assert env.run() == 0  # your own PR is not a rival
+
+
+def test_a_failed_read_does_not_block_a_send(env):
+    env.issue = None  # the fake raises NotFound for the issue read
+    env.timeline = None
+    assert env.run() == 0
+
+
+def test_the_pr_limit_is_recorded_as_wip_limit(env):
+    st = env.load()
+    st["contributions"] = {"prs": [open_pr("o/r", 1)]}
+    env.save(st)
+    refused(env, env.run(), "already open in o/r")
+    f = failure_of(env)
+    assert (f["code"], f["fix_action"]) == ("wip_limit", "none") and f["plain"].startswith("Couldn't send:")
+    assert env.sugg()["status"] == "ready"
+
+
+def test_edited_text_that_is_turned_down_is_text_rejected(env):
+    refused(env, env.run(body="Co-authored-by: a tool"), "AI marker")
+    f = failure_of(env)
+    assert (f["code"], f["fix_action"]) == ("text_rejected", "edit") and "AI marker" in f["why"]
+    assert env.run() == 0 and "failure" not in env.sugg()
+
+
+def test_a_missing_draft_file_is_missing_files(env):
+    (env.data / "briefings" / "o__r__7" / "draft.patch").unlink()
+    refused(env, env.run(), "no longer validates")
+    f = failure_of(env)
+    assert (f["code"], f["fix_action"]) == ("missing_files", "none")
+
+
+def test_any_other_error_is_github_error(env, monkeypatch):
+    monkeypatch.setattr(ghwrite, "create_pr", env.poster("pr", ghwrite.WriteError("GitHub said 500 for POST: sekret boom")))
+    assert env.run() == 1
+    f = failure_of(env)
+    assert (f["code"], f["fix_action"]) == ("github_error", "none") and "sekret" not in f["why"] and "500" in f["why"]
+
+
+def test_post_and_followup_failures_get_records_too(env, monkeypatch):
+    monkeypatch.setattr(ghwrite, "comment", env.poster("comment", ghwrite.WriteError("GitHub said 502 for POST")))
+    env.add_followup({**SMALL, "pr_url": "https://github.com/o/r/pull/9"})
+    assert env.run("followup") == 1
+    s = env.sugg()
+    assert s["status"] == "waiting_on_you"
+    f = failure_of(env)
+    assert f["code"] == "github_error" and f["refresh_by"] is None  # a follow-up has no draft to go stale
+    env.git_fail = "apply"
+    st = env.load()
+    st["suggestions"][KEY].pop("followup_pushed")  # the first try got as far as pushing
+    env.save(st)
+    assert env.run("followup") == 1
+    f = failure_of(env)
+    assert f["code"] == "upstream_moved" and f["fix_action"] == "none" and "branch changed" in f["plain"]
+    refused(env, env.run("followup", body="Co-authored-by: x"), "AI marker")
+    assert env.sugg()["failure"]["code"] == "text_rejected"
+    monkeypatch.setattr(ghwrite, "comment", env.poster("comment", {"html_url": "https://github.com/o/r/issues/9#c2"}))
+    env.git_fail = None
+    assert env.run("followup") == 0 and "failure" not in env.sugg()
+
+
+def test_a_comment_item_failure_is_recorded(env, monkeypatch):
+    write(env.data, good_briefing("o/r#8", ready=True, kind="triage", post_target="https://github.com/o/r/issues/8"),
+          patch=None, post="Looks like a dup.")
+    st = env.load()
+    briefings.ingest(env.data, st)
+    env.save(st)
+    monkeypatch.setattr(ghwrite, "comment", env.poster("comment", ghwrite.WriteError("GitHub said 401 for POST")))
+    assert env.run("post", key="o/r#8") == 1
+    s = env.load()["suggestions"]["o/r#8"]
+    assert s["status"] == "approved" and s["failure"]["code"] == "token_expired"
+
+
+def test_adopting_an_existing_pr_clears_the_failure(env):
+    env.set_status("approved", failure={"code": "upstream_moved"}, send_after_refresh=True)
+    env.pulls = [{"html_url": "https://github.com/o/r/pull/5", "state": "open", "merged_at": None,
+                  "head": {"ref": "fix/7-empty-input"}}]
+    assert env.run() == 0
+    s = env.sugg()
+    assert "failure" not in s and "send_after_refresh" not in s
+
+
+def test_dry_run_records_nothing(env):
+    before = (env.data / "state.json").read_text()
+    env.issue = {"state": "closed"}
+    assert env.run(dry_run=True) == 0  # the plan doesn't read the issue or the key
+    assert (env.data / "state.json").read_text() == before
+
+
+def test_the_digest_lists_stuck_items(env):
+    now = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+    st = env.load()
+    assert digest.build(env.cfg, env.data, st, now)["stuck"] == [] and digest.build(env.cfg, env.data, st, now)["send"]
+    st["suggestions"][KEY].update(status="approved", title="Crash on empty input", failure={
+        "code": "upstream_moved", "plain": "Couldn't send: r changed ci.yml on Oct 5, after this draft was written.",
+        "why": "The project edited ci.yml.", "fix_action": "refresh", "refresh_by": "2026-10-12", "at": "2026-10-06T00:00:00+00:00"})
+    d = digest.build(env.cfg, env.data, st, now)
+    assert d["stuck"] == [{"key": KEY, "slug": "o__r__7", "title": "Crash on empty input",
+                           "plain": "Couldn't send: r changed ci.yml on Oct 5, after this draft was written.",
+                           "why": "The project edited ci.yml.", "fix_action": "refresh", "refresh_by": "2026-10-12",
+                           "refreshing": False, "headline": "Fix crash on empty input",  # the draft PR's title
+                           "problem": "Crash on empty input", "sending": "A pull request",
+                           "your_part": "Tap Refresh & send by Oct 12"}]
+    assert d["send"] is True
+    st["suggestions"][KEY]["refresh_requested_at"] = "2026-10-07T11:00:00+00:00"
+    assert digest.build(env.cfg, env.data, st, now)["stuck"][0]["refreshing"] is True
+    st["suggestions"][KEY]["snoozed_until"] = "2026-10-09T00:00:00+00:00"
+    assert digest.build(env.cfg, env.data, st, now)["stuck"] == []
+    st["suggestions"][KEY].pop("snoozed_until")
+    st["suggestions"][KEY]["status"] = "skipped"
+    assert digest.build(env.cfg, env.data, st, now)["stuck"] == []
+
+
+def test_the_dashboard_payload_carries_the_failure_and_refresh_state(env):
+    env.set_status("approved", failure={"code": "upstream_moved", "plain": "Couldn't send: x", "why": "y",
+                                        "fix_action": "refresh", "refresh_by": "2999-01-01", "at": "2026-10-06T00:00:00+00:00"})
+    item = next(g for g in render.build_payload(env.cfg, env.data, env.load())["inbox"] if g["id"] == "ready")["items"][0]
+    assert item["failure"]["fix_action"] == "refresh" and item["refresh_pending"] is False
+    html = render.render(env.cfg, env.data, env.load()).read_text()
+    assert "Refresh &amp; send" in html and 'data-act="${act}"' in html
+    assert "refresh:" in html  # the confirmation text
+
+
 # -- ghwrite ------------------------------------------------------------------
 
 def test_ghwrite_only_posts_to_the_three_endpoints(monkeypatch):
@@ -694,6 +948,51 @@ def test_ghwrite_only_posts_to_the_three_endpoints(monkeypatch):
         ghwrite.comment("o/r", 7, "hi")
 
 
+def test_token_scopes_reads_the_header_with_the_same_auth_and_never_posts(monkeypatch):
+    seen = []
+
+    class Resp:
+        status = 200
+
+        def __init__(self, header):
+            self.headers = {"X-OAuth-Scopes": header} if header is not None else {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(header):
+        def urlopen(req, timeout=0):
+            seen.append((req.get_method(), req.full_url, req.get_header("Authorization"), req.data))
+            return Resp(header)
+        return urlopen
+
+    monkeypatch.setattr(ghwrite.urllib.request, "urlopen", fake("public_repo, workflow"))
+    assert ghwrite.token_scopes("tok") == (200, {"public_repo", "workflow"})
+    assert seen == [("GET", "https://api.github.com/user", "Bearer tok", None)]
+    monkeypatch.setattr(ghwrite.urllib.request, "urlopen", fake(None))
+    assert ghwrite.token_scopes("tok") == (200, None)  # a fine-grained key sends no header
+    monkeypatch.setenv("GH_TOKEN", "from-env")
+    ghwrite.token_scopes()
+    assert seen[-1][2] == "Bearer from-env"
+
+    def denied(req, timeout=0):
+        raise ghwrite.urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(ghwrite.urllib.request, "urlopen", denied)
+    assert ghwrite.token_scopes("bad") == (401, None)
+
+    def offline(req, timeout=0):
+        raise OSError("no network")
+
+    monkeypatch.setattr(ghwrite.urllib.request, "urlopen", offline)
+    assert ghwrite.token_scopes("tok") == (0, None)  # couldn't check: callers go ahead
+    monkeypatch.delenv("GH_TOKEN")
+    assert ghwrite.token_scopes() == (401, None)  # no key at all
+
+
 # -- the workflow -------------------------------------------------------------
 
 def run_blocks(text: str) -> list[str]:
@@ -713,7 +1012,7 @@ def run_blocks(text: str) -> list[str]:
 
 def test_act_workflow_never_interpolates_inputs_into_scripts():
     blocks = run_blocks(datarepo.ACT_YML)
-    assert len(blocks) == 4 and any("scout" in b for b in blocks)
+    assert len(blocks) == 16 and any("scout" in b for b in blocks)
     for b in blocks:
         assert "${{" not in b, b
     assert "${{ inputs" not in "\n".join(blocks)
@@ -732,18 +1031,70 @@ def test_act_workflow_shape():
     y = datarepo.ACT_YML
     assert "workflow_dispatch:" in y and "group: data" in y and "cancel-in-progress: false" in y
     assert "contents: write" in y and "GH_TOKEN: ${{ secrets.SUBMIT_TOKEN }}" in y
+    assert y.index("permissions:\n  contents: read\n\nconcurrency") < y.index("jobs:")  # read-only unless a job asks
     assert "ref: claude/scout-data" in y and "repository: aadityad12/oss-scout" in y
-    assert "options: [submit, post, followup, approve, later, skip, prepare, pair, unpair, feature, unfeature, summary]" in y
-    assert y.count("secrets.SUBMIT_TOKEN") == 1  # only the act step gets the token
+    assert "options: [submit, post, followup, approve, later, skip, prepare, pair, unpair, feature, unfeature, summary, refresh]" in y
+    assert y.count("secrets.SUBMIT_TOKEN") == 2  # the act step and the send job's submit, nothing else
     assert "github-actions[bot]" in y and "pull -q --rebase origin claude/scout-data" in y
     assert set(act.ACTIONS) == {"submit", "post", "followup", "approve", "later", "skip",
-                                "prepare", "pair", "unpair", "feature", "unfeature", "summary"}
+                                "prepare", "pair", "unpair", "feature", "unfeature", "summary", "refresh"}
+
+
+def job_text(name: str) -> str:
+    y = datarepo.ACT_YML
+    start = y.index(f"\n  {name}:\n") + 1
+    rest = y[start + 1:]
+    nxt = re.search(r"\n  [a-z]+:\n", rest)
+    return y[start:start + 1 + nxt.start()] if nxt else y[start:]
+
+
+def test_refresh_runs_as_check_then_send_or_request():
+    y = datarepo.ACT_YML
+    assert re.findall(r"^  ([a-z]+):$", y.split("\njobs:\n")[1], re.M) == ["act", "check", "send", "request"]
+    check, send, request = job_text("check"), job_text("send"), job_text("request")
+    assert "needs: act" in check and "inputs.action == 'refresh' && !inputs.dry_run" in check
+    assert "needs: check" in send and "needs.check.outputs.same_fix == 'true'" in send
+    assert "needs: check" in request and "needs.check.outputs.same_fix != 'true'" in request
+    assert "same_fix: ${{ steps.tests.outputs.same_fix }}" in check
+
+
+def test_the_check_job_holds_no_secrets_and_cannot_write():
+    check = job_text("check")
+    assert "secrets." not in check and "GH_TOKEN" not in check
+    assert "contents: read" in check and "contents: write" not in check
+    assert check.count("persist-credentials: false") == 2  # the data and the tool checkouts
+    assert "python -m scout refresh-check" in check
+    # the patch is uploaded before the project's tests run, so nothing the tests do can change it
+    assert check.index("--phase apply") < check.index("name: refresh-patch") < check.index("--phase tests") < check.index("name: refresh-verdict")
+    assert "git push" not in check and "git commit" not in check
+
+
+def test_only_the_act_job_and_the_send_jobs_submit_step_hold_the_key():
+    act_job, send, request = job_text("act"), job_text("send"), job_text("request")
+    assert act_job.count("secrets.SUBMIT_TOKEN") == 1 and send.count("secrets.SUBMIT_TOKEN") == 1
+    assert "secrets.SUBMIT_TOKEN" not in request
+    submit_step = send[send.index("name: Submit"):send.index("Refresh the dashboard and digest")]
+    assert "secrets.SUBMIT_TOKEN" in submit_step
+    # the patch is swapped in and saved before the submit, with the key not yet in play
+    assert send.index("refresh-apply") < send.index("Save the refreshed patch") < send.index("name: Submit")
+    assert "--action submit" in send and "for attempt in 1 2 3" in send
+
+
+def test_the_request_job_records_then_starts_the_routine_or_says_why_not():
+    request = job_text("request")
+    assert request.index("refresh-request") < request.index("git commit") < request.index("curl -sS")
+    assert "ROUTINE_FIRE_URL: ${{ secrets.ROUTINE_FIRE_URL }}" in request and "ROUTINE_TOKEN: ${{ secrets.ROUTINE_TOKEN }}" in request
+    assert "Routine trigger not configured" in request and "exit 0" in request  # a missing secret is a log line, not a failure
+    nightly = (config.ROOT / ".github/workflows/nightly.yml").read_text()
+    assert nightly[nightly.index("curl -sS"):nightly.index("-d '{}'")].replace("\\\n", "") .split() == \
+        request[request.index("curl -sS"):request.index("-d \"{")].replace("\\\n", "").split()
+    assert 'Refresh request: $KEY' in request
 
 
 def test_track_workflow_never_interpolates_inputs_into_scripts():
     y = datarepo.TRACK_YML
     blocks = run_blocks(y)
-    assert len(blocks) == 4 and any("scout track" in b for b in blocks)
+    assert len(blocks) == 5 and any("scout track" in b for b in blocks)
     for b in blocks:
         assert "${{" not in b, b
     assert "inputs" not in y and "workflow_dispatch:" in y
@@ -754,7 +1105,10 @@ def test_track_workflow_shape():
     assert "group: data" in y and "cancel-in-progress: false" in y and "contents: write" in y
     assert "ref: claude/scout-data" in y and "repository: aadityad12/oss-scout" in y
     assert "id: track" in y and "GH_TOKEN: ${{ github.token }}" in y and "SCOUT_DATA_DIR: ../data" in y
-    assert "secrets.SUBMIT_TOKEN" not in y
+    assert y.count("secrets.SUBMIT_TOKEN") == 1  # only the step that sends refreshed drafts
+    send = y[y.index("Send refreshed drafts"):y.index("Refresh the dashboard and digest")]
+    assert "steps.track.outputs.send != ''" in send and "python -m scout act --key \"$key\" --action submit" in send
+    assert y.index("python -m scout track") < y.index("Send refreshed drafts") < y.index("git commit")
     assert "python -m scout track" in y and "python -m scout digest" in y and "python -m scout render" in y
     assert "github-actions[bot]" in y and "for attempt in 1 2 3" in y and "git rebase --abort" in y
     assert y.index("python -m scout track") < y.index("git commit") < y.index("Start a Claude draft")
@@ -817,3 +1171,119 @@ def test_cli_dry_run(env, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["act", "--key", KEY, "--action", "submit", "--dry-run"])
     assert e.value.code == 0 and '"dry_run": true' in capsys.readouterr().out
+
+
+# -- apply_patch in a blob:none clone, with real git --------------------------
+
+def sh(*args, cwd=None):
+    out = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+                         cwd=cwd, check=True, capture_output=True, text=True)
+    return out.stdout
+
+
+FULL = "a" * 40
+SHA256 = "b" * 64
+
+
+def test_preimage_ids_reads_the_old_side_of_index_lines():
+    patch = (f"diff --git a/x b/x\nindex {FULL}..{'c' * 40} 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
+             f"diff --git a/y b/y\nindex {SHA256}..{'d' * 64}\n--- a/y\n+++ b/y\n@@ -1 +1 @@\n-a\n+b\n"
+             f"diff --git a/x2 b/x2\nindex {FULL}..{'e' * 40} 100644\n")  # a repeat is listed once
+    assert refresh.preimage_ids(patch) == [FULL, SHA256]
+
+
+def test_preimage_ids_skips_abbreviated_ids_and_new_files():
+    patch = ("diff --git a/x b/x\nindex 1a2b3c4..5d6e7f8 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
+             f"diff --git a/new b/new\nnew file mode 100644\nindex {'0' * 40}..{'f' * 40}\n--- /dev/null\n+++ b/new\n"
+             f"diff --git a/new2 b/new2\nnew file mode 100644\nindex {'0' * 64}..{'f' * 64}\n"
+             f"diff --git a/ok b/ok\nindex {FULL}..{'c' * 40} 100644\n")
+    assert refresh.preimage_ids(patch) == [FULL]
+    assert refresh.preimage_ids("+index " + FULL + ".." + FULL + "\nnot an index line\n") == []
+
+
+def test_preimage_ids_handles_binary_patches():
+    patch = (f"diff --git a/logo.png b/logo.png\nindex {FULL}..{'c' * 40} 100644\nGIT binary patch\nliteral 3\nKcmZQz0000\n\n"
+             f"literal 0\nHcmV?d00001\n\n"
+             f"diff --git a/new.bin b/new.bin\nnew file mode 100644\nindex {'0' * 40}..{'c' * 40}\nGIT binary patch\n"
+             f"literal 3\nKcmZQz0000\n\nliteral 0\nHcmV?d00001\n\n")
+    assert refresh.preimage_ids(patch) == [FULL]
+
+
+class Partial:
+    """A bare 'upstream' with a patch made on commit A and a partial clone sitting on newer commit B."""
+
+    def __init__(self, tmp: Path, full_index: bool = True):
+        self.bare, self.src, self.work = tmp / "up.git", tmp / "src", tmp / "clone"
+        sh("init", "--bare", "-b", "main", str(self.bare))
+        sh("config", "uploadpack.allowFilter", "true", cwd=self.bare)
+        sh("config", "uploadpack.allowAnySHA1InWant", "true", cwd=self.bare)
+        sh("clone", str(self.bare), str(self.src))
+        self.lines = [f"line {i}\n" for i in range(1, 31)]
+        self.write("A")
+        self.old_blob = sh("rev-parse", "HEAD:code.py", cwd=self.src).strip()
+        fixed = list(self.lines)
+        fixed[16] = "line 17 fixed\n"
+        (self.src / "code.py").write_text("".join(fixed))
+        self.patch = tmp / "draft.patch"
+        self.patch.write_text(sh("diff", *(["--full-index"] if full_index else []), "--binary", cwd=self.src))
+        self.lines[14] = "line 15 reworded upstream\n"  # inside the fix's 3 context lines
+        self.write("B")
+        self.url = f"file://{self.bare}"
+
+    def write(self, msg):
+        (self.src / "code.py").write_text("".join(self.lines))
+        sh("add", "-A", cwd=self.src)
+        sh("commit", "-m", msg, cwd=self.src)
+        sh("push", "origin", "main", cwd=self.src)
+
+    def clone_as_submit_does(self):
+        """What `submit` leaves behind: a blob:none clone with upstream fetched as a promisor remote."""
+        sh("clone", "--filter=blob:none", self.url, str(self.work))
+        for args in (["remote", "add", "upstream", self.url], ["config", "remote.upstream.promisor", "true"],
+                     ["config", "remote.upstream.partialclonefilter", "blob:none"],
+                     ["fetch", "--filter=blob:none", "--no-tags", "upstream", "main"],
+                     ["checkout", "--no-track", "-b", "fix", "upstream/main"]):
+            sh(*args, cwd=self.work)
+        return self.work
+
+    def has(self, blob):
+        env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+        return subprocess.run(["git", "cat-file", "-e", blob], cwd=self.work, env=env).returncode == 0
+
+
+@pytest.fixture
+def no_lazy_fetch(monkeypatch):
+    # Newer git lets `apply --3way` fetch missing blobs itself; the git on the runners does not.
+    return lambda: monkeypatch.setenv("GIT_NO_LAZY_FETCH", "1")  # call after the clone: its checkout needs lazy fetch
+
+
+def test_apply_patch_fetches_the_preimage_blobs_for_a_three_way_apply(tmp_path, no_lazy_fetch):
+    p = Partial(tmp_path)
+    work = p.clone_as_submit_does()
+    no_lazy_fetch()
+    assert not p.has(p.old_blob)  # the clone never downloaded the version the patch was made on
+    plain = subprocess.run(["git", "apply", "--check", str(p.patch)], cwd=work, capture_output=True, text=True)
+    assert plain.returncode  # the context moved, so only a 3-way merge can apply it
+    raw = subprocess.run(["git", "apply", "--3way", str(p.patch)], cwd=work, capture_output=True, text=True)
+    assert raw.returncode and "lacks the necessary blob" in raw.stderr  # the production failure
+    act.apply_patch(work, p.patch)
+    text = (work / "code.py").read_text()
+    assert "line 17 fixed" in text and "line 15 reworded upstream" in text
+    assert p.has(p.old_blob) and "M  code.py" in sh("status", "--short", cwd=work)
+
+
+def test_apply_patch_without_full_ids_has_nothing_to_prefetch(tmp_path, no_lazy_fetch):
+    p = Partial(tmp_path, full_index=False)
+    work = p.clone_as_submit_does()
+    no_lazy_fetch()
+    with pytest.raises(act.PatchError, match="lacks the necessary blob"):
+        act.apply_patch(work, p.patch)
+
+
+def test_apply_patch_goes_on_to_three_way_when_the_fetch_fails(tmp_path, no_lazy_fetch):
+    p = Partial(tmp_path)
+    work = p.clone_as_submit_does()
+    no_lazy_fetch()
+    sh("remote", "set-url", "upstream", str(tmp_path / "nowhere.git"), cwd=work)
+    with pytest.raises(act.PatchError, match="lacks the necessary blob"):
+        act.apply_patch(work, p.patch)

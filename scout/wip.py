@@ -1,7 +1,9 @@
 """How much is already in flight? Decides whether tonight may prepare a ready item.
 
 Read from state: your open PRs (from the tracker) and ready items that haven't
-been submitted yet. The result goes into candidates.json for the Claude step.
+been submitted yet. A failed send leaves its item unsent, so one stuck item must not
+block every later night: only `max_unsent` of them together do. The result goes into
+candidates.json for the Claude step.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ def compute(state: dict, settings: dict, now: datetime | None = None) -> dict:
     max_ready = settings.get("max_ready", 1)
     max_open = settings.get("max_open_prs", 3)
     max_per_repo = settings.get("max_open_prs_per_repo", 1)
+    max_unsent = settings.get("max_unsent", 2)
 
     open_prs = [p for p in state.get("contributions", {}).get("prs", []) if p.get("status") == "open"]
     by_repo: dict[str, int] = {}
@@ -44,8 +47,8 @@ def compute(state: dict, settings: dict, now: datetime | None = None) -> dict:
         reasons.append("a maintainer is waiting on you: " + ", ".join(f"{w['repo']}#{w['number']}" for w in waiting))
     if len(open_prs) >= max_open:
         reasons.append(f"{len(open_prs)} open PRs (max {max_open})")
-    if unsent:
-        reasons.append("ready but not submitted yet: " + ", ".join(unsent))
+    if len(unsent) >= max_unsent:
+        reasons.append(f"{len(unsent)} ready but not submitted yet (max {max_unsent}): " + ", ".join(unsent))
 
     return {
         "ready_allowed": not reasons,

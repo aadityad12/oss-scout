@@ -2,12 +2,12 @@
 //
 // Serves dashboard.html from the private data repo, turns a button press into a
 // run of the data repo's act workflow (which does the GitHub writes, with its own
-// token), sends the daily email, starts the data repo's review check every 3 hours
+// token), sends the daily email and the Saturday laptop email, starts the data repo's review check every 3 hours
 // and emails when a reviewer has replied. Cloudflare Access sits in front; this code
 // checks the Access token again on every request.
 
-export const ACTIONS = ["submit", "post", "followup", "approve", "later", "skip", "prepare", "pair", "unpair", "feature", "unfeature", "summary"];
-const NO_TEXT_ACTIONS = ["prepare", "pair", "unpair", "feature", "unfeature"]; // these ignore title and body
+export const ACTIONS = ["submit", "post", "followup", "approve", "later", "skip", "prepare", "pair", "unpair", "feature", "unfeature", "summary", "refresh"];
+const NO_TEXT_ACTIONS = ["prepare", "pair", "unpair", "feature", "unfeature", "refresh"]; // these ignore title and body
 export const MAX_SUMMARY = 200; // the impact line of a PR
 export const KEY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[0-9]+$/;
 export const MAX_TITLE = 256;
@@ -18,7 +18,7 @@ const GITHUB = "https://api.github.com";
 const CERT_TTL_MS = 60 * 60 * 1000;
 const ALERT_WINDOW_MS = 3 * 60 * 60 * 1000; // an alerts.json older than one check cycle is stale
 const QUIET_TZ = "America/Los_Angeles";
-export const CRONS = { "0 15 * * *": "digest", "0 */3 * * *": "track", "30 */3 * * *": "alerts" };
+export const CRONS = { "0 15 * * *": "digest", "0 */3 * * *": "track", "30 */3 * * *": "alerts", "10 15 * * SAT": "weekly" };
 
 const enc = new TextEncoder();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -225,42 +225,104 @@ export async function handle(request, env, { fetchFn = fetch, now = Date.now() }
 // A link to one item on the dashboard; the page opens the item named by the hash.
 const deepLink = (env, slug) => (slug ? `${String(env.DASHBOARD_URL).replace(/\/+$/, "")}/#${encodeURIComponent(slug)}` : env.DASHBOARD_URL);
 const linked = (env, slug, inner) => (slug ? `<a href="${esc(deepLink(env, slug))}" style="color:inherit">${inner}</a>` : inner);
+const dashLink = (env) => `<p style="margin:24px 0 0"><a href="${esc(env.DASHBOARD_URL)}" style="color:#0000e0">Open the dashboard</a></p>`;
 const openButton = (env) =>
-  `<p style="margin:24px 0"><a href="${esc(env.DASHBOARD_URL)}" style="display:inline-block;background:#1e6b5a;color:#fff;text-decoration:none;font-weight:600;font-size:18px;padding:14px 26px;border-radius:10px">Open the dashboard</a></p>`;
+  `<p style="margin:24px 0"><a href="${esc(env.DASHBOARD_URL)}" style="display:inline-block;background:#0000f2;color:#fff;text-decoration:none;font-weight:600;font-size:18px;padding:14px 26px;border-radius:10px">Open the dashboard</a></p>`;
+
+// "2026-10-12" as "Oct 12", read as a plain date so the timezone can't move it
+const shortDate = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso ?? ""));
+  return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : "";
+};
+
+// Email-safe inline styles: neutral text, one red for what went wrong, one blue for the buttons.
+const INK = "#10121a", MUTED = "#545869", LINE = "#dfe2ec", RED = "#be2a2f", BLUE = "#0000f2";
+const WRAP = `font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:${INK};background:#ffffff;max-width:560px;padding:4px`;
+const h2 = (title, color = INK) => `<h2 style="font-size:17px;margin:28px 0 12px;color:${color}">${esc(title)}</h2>`;
+const noun = (items) => (items.every((i) => (i.kind || "pr") === "pr") ? "PR" : "item");
+const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// The three plain lines every item leads with. A line the digest didn't carry is left out.
+const LINES = [["problem", "What's broken"], ["sending", "You'd send"], ["your_part", "Your part"]];
+const lineRows = (i) =>
+  LINES.filter(([k]) => i[k])
+    .map(([k, label]) => `<div style="margin:8px 0 0"><div style="font-size:12px;color:${MUTED};text-transform:uppercase;letter-spacing:.04em">${label}</div><div>${esc(i[k])}</div></div>`)
+    .join("");
+const lineText = (i) => LINES.filter(([k]) => i[k]).map(([k, label]) => `${label}: ${i[k]}`);
+// the bold heading: a short plain name (`headline`), else the title; the key stays as the small grey line under it
+const heading = (i) => i.headline || i.title || i.key;
+const head = (i) => (heading(i) !== i.key ? [heading(i), i.key] : [i.key]);
+const itemButton = (env, i, label) =>
+  `<p style="margin:14px 0 0"><a href="${esc(deepLink(env, i.slug))}" style="display:inline-block;background:${BLUE};color:#fff;text-decoration:none;font-weight:600;font-size:16px;padding:12px 22px;border-radius:10px">${esc(label)}</a></p>`;
+
+// One item: bold title, its key, anything specific to the section (`extra`), the three lines, one button.
+const itemCard = (env, i, label, extra = "") =>
+  `<div style="margin:0 0 22px;padding:0 0 22px;border-bottom:1px solid ${LINE}"><div style="font-size:17px;font-weight:700">${esc(heading(i))}</div>${heading(i) !== i.key ? `<div style="font-size:13px;color:${MUTED}">${esc(i.key)}</div>` : ""}${extra}${lineRows(i)}${itemButton(env, i, label)}</div>`;
+const note = (text, color = INK) => (text ? `<div style="margin:10px 0 0;color:${color};font-weight:600">${esc(text)}</div>` : "");
+
+const refreshNote = (i) => (i.refreshing ? "Refreshing now." : shortDate(i.refresh_by) ? `Refresh by ${shortDate(i.refresh_by)}` : "");
+const stuckCard = (env, i) =>
+  itemCard(env, i, i.fix_action === "refresh" && !i.refreshing ? "Open and refresh" : "Open",
+    `${note(i.plain, RED)}${i.why ? `<div style="margin:4px 0 0">Why: ${esc(i.why)}</div>` : ""}${refreshNote(i) ? `<div style="margin:4px 0 0;font-weight:600">${esc(refreshNote(i))}</div>` : ""}`);
 
 export function buildEmail(d, env) {
-  const ready = d.ready || [], waiting = d.waiting_on_you || [], fresh = d.new_briefings || [], pairing = d.pairing || [];
+  const stuck = d.stuck || [], ready = d.ready || [], waiting = d.waiting_on_you || [];
   const parts = [];
-  const late = waiting.some((w) => w.overdue) ? "overdue" : "needed";
-  if (waiting.length === 1) parts.push(`Reply ${late} on ${waiting[0].key}`);
-  else if (waiting.length) parts.push(`${waiting.length} replies ${late}`);
-  if (ready.length) parts.push(`${ready.length} ready`);
-  if (fresh.length) parts.push(`${fresh.length} new`);
-  if (d.token_warning) parts.push("token needs rotating");
+  if (stuck.length) {
+    const by = stuck.map((i) => i.refresh_by).filter((x) => shortDate(x)).sort()[0];
+    parts.push(`Couldn't send ${count(stuck.length, noun(stuck))}${by ? `: refresh by ${shortDate(by)}` : ""}`);
+  }
+  if (ready.length) parts.push(`${count(ready.length, noun(ready))} ready to send`);
+  if (waiting.length) parts.push(waiting.length === 1 ? "A maintainer replied" : `Maintainers replied on ${waiting.length} PRs`);
+  if (d.token_warning) parts.push("GitHub key needs replacing");
   const subject = parts.join(" · ") || "Nothing needs you today";
 
-  const list = (title, items, line) =>
-    items.length ? `<h2 style="font-size:16px;margin:20px 0 6px">${title}</h2><ul style="padding-left:20px;margin:0">${items.map((i) => `<li style="margin:4px 0">${line(i)}</li>`).join("")}</ul>` : "";
-  const titled = (i) => linked(env, i.slug, `${esc(i.title)} <span style="color:#5b6964">${esc(i.key)}</span>`);
-  const html = `<div style="font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#16201d;max-width:560px">
+  const overdue = (w) => (w.overdue ? "Waiting more than 2 days" : "");
+  const html = `<div style="${WRAP}">
 <h1 style="font-size:20px;margin:0 0 8px">OSS Scout · ${esc(d.date)}</h1>
-${d.token_warning ? `<p style="background:#fff1e0;padding:10px 12px;border-radius:8px"><b>Your GitHub token is ${esc(d.token_age_days)} days old.</b> Rotate it soon: submitting stops when it expires.</p>` : ""}
-${list("Ready for one tap", ready, titled)}
-${list("Waiting on you", waiting, (w) => `${linked(env, w.slug, esc(w.key))}${w.overdue ? ' <b style="color:#cf222e">overdue</b>' : ""}`)}
-${list("New briefings", fresh, titled)}
-${pairing.length ? `<p style="margin:20px 0 0">Pairing queue: ${pairing.length}</p>` : ""}
-${openButton(env)}
+${d.token_warning ? `<p style="background:#fcebec;padding:10px 12px;border-radius:8px"><b>Your GitHub key is ${esc(d.token_age_days)} days old.</b> Replace it soon: sending stops when it expires.</p>` : ""}
+${stuck.length ? h2("Couldn't send", RED) + stuck.map((i) => stuckCard(env, i)).join("") : ""}
+${ready.length ? h2("Ready to send") + ready.map((i) => itemCard(env, i, "Review and send")).join("") : ""}
+${waiting.length ? h2("A maintainer replied") + waiting.map((w) => itemCard(env, w, "Read the reply", note(overdue(w), RED))).join("") : ""}
+${dashLink(env)}
 </div>`;
+
+  const link = (i) => deepLink(env, i.slug);
+  const block = (title, items, lines) => (items.length ? ["", title.toUpperCase(), ...items.flatMap((i) => ["", ...lines(i)])] : []);
   const plain = [
     `OSS Scout ${d.date}`,
-    d.token_warning ? `Your GitHub token is ${d.token_age_days} days old. Rotate it soon.` : "",
-    ...ready.map((i) => `Ready: ${i.title} (${i.key})`),
-    ...waiting.map((w) => `Waiting on you: ${w.key}${w.overdue ? " (overdue)" : ""}`),
-    ...fresh.map((i) => `New: ${i.title} (${i.key})`),
-    pairing.length ? `Pairing queue: ${pairing.length}` : "",
+    d.token_warning ? `Your GitHub key is ${d.token_age_days} days old. Replace it soon: sending stops when it expires.` : "",
+    ...block("Couldn't send", stuck, (i) => [...head(i), i.plain, i.why ? `Why: ${i.why}` : "", refreshNote(i), ...lineText(i), link(i)]),
+    ...block("Ready to send", ready, (i) => [...head(i), ...lineText(i), link(i)]),
+    ...block("A maintainer replied", waiting, (w) => [...head(w), overdue(w), ...lineText(w), link(w)]),
+    "",
     env.DASHBOARD_URL,
-  ].filter(Boolean).join("\n");
+  ].filter((line, n, all) => line || all[n - 1]).join("\n");
   return { subject, html, text: plain };
+}
+
+const WEEKLY_MAX = 5; // longer than this and it stops being a short list
+export const WEEKLY_SUBJECT = "Worth doing on your laptop this week";
+
+// The Saturday email: briefings from the last week that need a laptop session. Never urgent.
+export function buildWeeklyEmail(d, env) {
+  const all = d.weekly || [], items = all.slice(0, WEEKLY_MAX), more = all.length - items.length;
+  const html = `<div style="${WRAP}">
+<h1 style="font-size:20px;margin:0 0 8px">${WEEKLY_SUBJECT}</h1>
+<p style="margin:0 0 20px;color:${MUTED}">Nothing here is urgent. Each one is a laptop session: you and Claude, with the project's code in front of you.</p>
+${items.map((i) => itemCard(env, i, "Open the briefing")).join("")}
+${more > 0 ? `<p style="color:${MUTED}">And ${more} more on the dashboard.</p>` : ""}
+${dashLink(env)}
+</div>`;
+  const text = [
+    WEEKLY_SUBJECT,
+    "Nothing here is urgent. Each one is a laptop session.",
+    ...items.flatMap((i) => ["", ...head(i), ...lineText(i), deepLink(env, i.slug)]),
+    more > 0 ? ["", `And ${more} more on the dashboard.`] : [],
+    "",
+    env.DASHBOARD_URL,
+  ].flat().filter((line, n, all) => line || all[n - 1]).join("\n");
+  return { subject: WEEKLY_SUBJECT, html, text };
 }
 
 export function buildAlertEmail(alerts, env) {
@@ -290,6 +352,19 @@ export async function sendDigest(env, { fetchFn = fetch, now = Date.now() } = {}
   if (!d.send) return { sent: false, reason: "nothing to send" };
   if (d.date !== today) return { sent: false, reason: `digest is from ${d.date}, not ${today}` };
   const mail = buildEmail(d, env);
+  await sendMail(env, mail, fetchFn);
+  return { sent: true, subject: mail.subject };
+}
+
+// Saturday morning: briefings from the last week that need a laptop session. Not sent when there are none.
+export async function sendWeekly(env, { fetchFn = fetch, now = Date.now() } = {}) {
+  const res = await dataFile(env, "digest.json", fetchFn);
+  if (!res.ok) return { sent: false, reason: `digest.json: ${res.status}` };
+  const d = await res.json();
+  const today = new Date(now).toISOString().slice(0, 10);
+  if (!Array.isArray(d.weekly) || !d.weekly.length) return { sent: false, reason: "nothing to send" };
+  if (d.date !== today) return { sent: false, reason: `digest is from ${d.date}, not ${today}` };
+  const mail = buildWeeklyEmail(d, env);
   await sendMail(env, mail, fetchFn);
   return { sent: true, subject: mail.subject };
 }
@@ -340,6 +415,7 @@ export default {
     if (job === "digest") ctx.waitUntil(sendDigest(env));
     else if (job === "track") ctx.waitUntil(dispatchTrack(env));
     else if (job === "alerts") ctx.waitUntil(sendAlerts(env));
+    else if (job === "weekly") ctx.waitUntil(sendWeekly(env));
     else console.log(`unknown cron "${event.cron}", doing nothing`);
   },
 };

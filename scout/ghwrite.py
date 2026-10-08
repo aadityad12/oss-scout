@@ -4,6 +4,9 @@ It runs in the data repo's act workflow with the owner's token (GH_TOKEN), after
 the owner tapped a button. It POSTs to exactly three endpoints: fork a repo, open
 a pull request, and comment on an issue or pull request. Nothing else passes.
 The read-only client in github.py is unchanged and is not used for writes.
+
+It also holds one read, `token_scopes`: a GET of `user` with the same token and
+headers, to see which permissions the key has before any clone starts.
 """
 
 from __future__ import annotations
@@ -27,12 +30,19 @@ class WriteError(Exception):
     pass
 
 
-def _send(path: str, body: dict, token: str) -> dict:
-    req = urllib.request.Request(f"{API}/{path}", data=json.dumps(body).encode(), method="POST")
+def _request(path: str, token: str, body: dict | None = None) -> urllib.request.Request:
+    req = urllib.request.Request(f"{API}/{path}", data=None if body is None else json.dumps(body).encode(),
+                                 method="GET" if body is None else "POST")
     req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Content-Type", "application/json")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
     req.add_header("User-Agent", "oss-scout")
     req.add_header("Authorization", f"Bearer {token}")
+    return req
+
+
+def _send(path: str, body: dict, token: str) -> dict:
+    req = _request(path, token, body)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read().decode() or "{}")
@@ -61,3 +71,23 @@ def create_pr(repo: str, title: str, body: str, head: str, base: str) -> dict:
 
 def comment(repo: str, number: int, body: str) -> dict:
     return post(f"repos/{repo}/issues/{number}/comments", {"body": body})
+
+
+def token_scopes(token: str | None = None) -> tuple[int, set[str] | None]:
+    """(HTTP status, scopes) for the submit token: one GET of `user`, never printing the token.
+
+    Scopes come from the X-OAuth-Scopes header. Fine-grained tokens send none, so the
+    set is None and the caller can't tell; a 401 means the key is expired or revoked.
+    A network problem returns status 0, which callers treat as "couldn't check".
+    """
+    token = token or os.environ.get("GH_TOKEN", "")
+    if not token:
+        return 401, None
+    try:
+        with urllib.request.urlopen(_request("user", token), timeout=30) as resp:
+            header, status = resp.headers.get("X-OAuth-Scopes"), resp.status
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except OSError:
+        return 0, None
+    return status, None if header is None else {s.strip() for s in header.split(",") if s.strip()}

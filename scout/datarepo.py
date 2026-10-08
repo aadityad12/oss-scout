@@ -47,14 +47,85 @@ This repository's `.claude/hooks/guard.py` blocks every write to GitHub except
 don't look for a way around it: note it in your summary and move on.
 """
 
-ACT_YML = """name: act
+def _checkout(persist: bool = True) -> str:
+    keep = "" if persist else "          persist-credentials: false\n"
+    return f"""      - name: Check out the data
+        uses: actions/checkout@v4
+        with:
+          ref: claude/scout-data
+          path: data
+{keep}
+      - name: Check out the tool
+        uses: actions/checkout@v4
+        with:
+          repository: aadityad12/oss-scout
+          path: tool
+{keep}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+"""
+
+
+RENDER_STEP = """      - name: Refresh the dashboard and digest
+        if: ${{ !inputs.dry_run }}
+        working-directory: tool
+        env:
+          SCOUT_DATA_DIR: ../data
+        run: |
+          python -m scout digest
+          python -m scout render
+"""
+
+
+def _save(name: str, message: str = "act: $ACTION $KEY") -> str:
+    return f"""      - name: {name}
+        if: ${{{{ !inputs.dry_run }}}}
+        working-directory: data
+        env:
+          KEY: ${{{{ inputs.key }}}}
+          ACTION: ${{{{ inputs.action }}}}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -q -m "{message}"
+            saved=""
+            for attempt in 1 2 3; do
+              if git pull -q --rebase origin claude/scout-data && git push -q origin HEAD:claude/scout-data; then
+                saved=yes
+                break
+              fi
+              git rebase --abort 2>/dev/null || true
+              sleep $((attempt * 5))
+            done
+            if [ -z "$saved" ]; then
+              echo "::error::The GitHub action happened, but saving the new state to the data repo failed. Tap again: the next run finds the existing PR or comment and records it, without posting twice."
+              exit 1
+            fi
+          fi
+"""
+
+
+ACT_YML = (
+    """name: act
 run-name: "act: ${{ inputs.action }} ${{ inputs.key }}"
 
 # Does what the owner tapped on the private dashboard: opens a PR, posts a comment,
 # pushes a review fix, or records Later / Skip. Started only by the dashboard's
-# Worker (workflow_dispatch). SUBMIT_TOKEN is a classic PAT (public_repo) kept only
-# as a secret of this repository; the nightly routine never sees it.
+# Worker (workflow_dispatch). SUBMIT_TOKEN is a classic PAT (public_repo, plus workflow
+# for changes under .github/workflows) kept only as a secret of this repository; the
+# nightly routine never sees it.
 # This file must live on the default branch (main) for workflow_dispatch to find it.
+#
+# Refresh & send runs four jobs. `act` records the tap. `check` rebuilds the draft on the
+# project's current code and runs the project's tests, so it holds NO secrets and cannot
+# write anything. `send` (only if it is the same fix) swaps in the new patch and submits.
+# `request` (otherwise) records the request and starts the Claude routine for that one item;
+# it needs ROUTINE_FIRE_URL and ROUTINE_TOKEN in this repository's secrets.
 
 on:
   workflow_dispatch:
@@ -67,7 +138,7 @@ on:
         description: "What to do"
         required: true
         type: choice
-        options: [submit, post, followup, approve, later, skip, prepare, pair, unpair, feature, unfeature, summary]
+        options: [submit, post, followup, approve, later, skip, prepare, pair, unpair, feature, unfeature, summary, refresh]
       title:
         description: "Edited PR title (or commit message for a follow-up)"
         required: false
@@ -85,7 +156,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: data
@@ -95,23 +166,12 @@ jobs:
   act:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
-      - name: Check out the data
-        uses: actions/checkout@v4
-        with:
-          ref: claude/scout-data
-          path: data
-
-      - name: Check out the tool
-        uses: actions/checkout@v4
-        with:
-          repository: aadityad12/oss-scout
-          path: tool
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
+"""
+    + _checkout()
+    + """
       - name: Act
         id: act
         continue-on-error: true
@@ -136,55 +196,159 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then set -- "$@" --dry-run; fi
           python -m scout "$@"
 
-      - name: Refresh the dashboard and digest
-        if: ${{ !inputs.dry_run }}
-        working-directory: tool
-        env:
-          SCOUT_DATA_DIR: ../data
-        run: |
-          python -m scout digest
-          python -m scout render
-
-      - name: Save to the data repo
-        if: ${{ !inputs.dry_run }}
-        working-directory: data
-        env:
-          KEY: ${{ inputs.key }}
-          ACTION: ${{ inputs.action }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -q -m "act: $ACTION $KEY"
-            saved=""
-            for attempt in 1 2 3; do
-              if git pull -q --rebase origin claude/scout-data && git push -q origin HEAD:claude/scout-data; then
-                saved=yes
-                break
-              fi
-              git rebase --abort 2>/dev/null || true
-              sleep $((attempt * 5))
-            done
-            if [ -z "$saved" ]; then
-              echo "::error::The GitHub action happened, but saving the new state to the data repo failed. Tap again: the next run finds the existing PR or comment and records it, without posting twice."
-              exit 1
-            fi
-          fi
-
+"""
+    + RENDER_STEP
+    + "\n"
+    + _save("Save to the data repo")
+    + """
       - name: Fail the run if the action failed
         if: ${{ steps.act.outcome == 'failure' }}
         run: exit 1
+
+  check:
+    needs: act
+    if: ${{ inputs.action == 'refresh' && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      same_fix: ${{ steps.tests.outputs.same_fix }}
+    steps:
 """
+    + _checkout(persist=False)
+    + """
+      # The patch is written and uploaded before any project code runs, so the tests
+      # cannot change what the send job receives.
+      - name: Rebuild the patch on the current code
+        working-directory: tool
+        env:
+          KEY: ${{ inputs.key }}
+          SCOUT_DATA_DIR: ../data
+        run: python -m scout refresh-check --key "$KEY" --out "$RUNNER_TEMP/out" --phase apply
+
+      - name: Keep the patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-patch
+          path: ${{ runner.temp }}/out/new.patch
+          if-no-files-found: ignore
+
+      - name: Run the project's tests
+        id: tests
+        working-directory: tool
+        env:
+          KEY: ${{ inputs.key }}
+          SCOUT_DATA_DIR: ../data
+        run: python -m scout refresh-check --key "$KEY" --out "$RUNNER_TEMP/out" --phase tests
+
+      - name: Keep the verdict
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-verdict
+          path: ${{ runner.temp }}/out/verdict.json
+
+  send:
+    needs: check
+    if: ${{ needs.check.outputs.same_fix == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+"""
+    + _checkout()
+    + """
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: refresh-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/in
+
+      - name: Swap in the refreshed patch
+        working-directory: tool
+        env:
+          KEY: ${{ inputs.key }}
+          SCOUT_DATA_DIR: ../data
+        run: python -m scout refresh-apply --key "$KEY" --patch "$RUNNER_TEMP/in/new.patch" --verdict "$RUNNER_TEMP/in/verdict.json"
+
+"""
+    + _save("Save the refreshed patch", "act: refresh $KEY")
+    + """
+      - name: Submit
+        id: submit
+        continue-on-error: true
+        working-directory: tool
+        env:
+          KEY: ${{ inputs.key }}
+          SCOUT_DATA_DIR: ../data
+          GH_TOKEN: ${{ secrets.SUBMIT_TOKEN }}
+        run: python -m scout act --key "$KEY" --action submit
+
+"""
+    + RENDER_STEP
+    + "\n"
+    + _save("Save to the data repo", "act: submit $KEY")
+    + """
+      - name: Fail the run if the submit failed
+        if: ${{ steps.submit.outcome == 'failure' }}
+        run: exit 1
+
+  request:
+    needs: check
+    if: ${{ needs.check.outputs.same_fix != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+"""
+    + _checkout()
+    + """
+      - uses: actions/download-artifact@v4
+        with:
+          name: refresh-verdict
+          path: ${{ runner.temp }}/in
+
+      - name: Record that a rebuild is wanted
+        working-directory: tool
+        env:
+          KEY: ${{ inputs.key }}
+          SCOUT_DATA_DIR: ../data
+        run: python -m scout refresh-request --key "$KEY" --verdict "$RUNNER_TEMP/in/verdict.json"
+
+"""
+    + RENDER_STEP
+    + "\n"
+    + _save("Save to the data repo", "act: refresh request $KEY")
+    + """
+      - name: Start the Claude routine for this one item
+        env:
+          KEY: ${{ inputs.key }}
+          ROUTINE_FIRE_URL: ${{ secrets.ROUTINE_FIRE_URL }}
+          ROUTINE_TOKEN: ${{ secrets.ROUTINE_TOKEN }}
+        run: |
+          if [ -z "$ROUTINE_FIRE_URL" ] || [ -z "$ROUTINE_TOKEN" ]; then
+            echo "Routine trigger not configured: add ROUTINE_FIRE_URL and ROUTINE_TOKEN to this repo's secrets. The rebuild waits for the next nightly run."
+            exit 0
+          fi
+          curl -sS --fail-with-body -o /dev/null -X POST "$ROUTINE_FIRE_URL" \\
+            -H "Authorization: Bearer $ROUTINE_TOKEN" \\
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \\
+            -H "anthropic-version: 2023-06-01" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"text\\": \\"Refresh request: $KEY\\"}"
+"""
+)
+
 
 TRACK_YML = r"""name: track
 
 # Every three hours the dashboard's Worker starts this (workflow_dispatch). It
 # refreshes your PR history and notes reviews that are new since the last check,
 # without any AI. When there is one, it also starts a Claude draft, at most
-# three times a day. This file must live on the default branch (main).
+# three times a day. It also submits drafts the Claude routine rebuilt after a
+# Refresh & send tap. This file must live on the default branch (main).
 
 on:
   workflow_dispatch:
@@ -224,6 +388,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SCOUT_DATA_DIR: ../data
         run: python -m scout track
+
+      # A draft the Claude routine rebuilt as the same fix, for an item whose owner tapped
+      # Refresh & send, goes out here. The routine itself cannot start workflows or write
+      # to GitHub, so this is where its answer is acted on (the Worker starts this every 3 hours).
+      - name: Send refreshed drafts
+        if: steps.track.outputs.send != ''
+        working-directory: tool
+        env:
+          SEND_KEYS: ${{ steps.track.outputs.send }}
+          SCOUT_DATA_DIR: ../data
+          GH_TOKEN: ${{ secrets.SUBMIT_TOKEN }}
+        run: |
+          for key in $SEND_KEYS; do
+            echo "$key" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$' || { echo "bad key" >&2; continue; }
+            python -m scout act --key "$key" --action submit || true
+          done
 
       - name: Refresh the dashboard and digest
         working-directory: tool

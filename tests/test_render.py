@@ -2,6 +2,8 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from scout import briefings, config, public, render, state as statemod
 from scout.config import ROOT
 
@@ -33,12 +35,41 @@ def test_validate_catches_missing_and_wrong_types():
     assert set(briefings.validate(b)) == {"missing why", "number should be int"}
 
 
-def test_guide_mode_never_shows_a_patch(tmp_path):
-    b = {**good_briefing(), "mode": "guide"}
+@pytest.mark.parametrize("mode", ["guide", "pair", "own"])
+def test_non_draft_modes_never_show_a_patch(tmp_path, mode):
+    b = {**good_briefing(), "mode": mode}
+    if mode != "guide":
+        b["claim_comment"] = "- reproduced on main"
     write_briefing(tmp_path, b, patch="+secret draft\n")
     loaded = briefings.load_all(tmp_path)[0]
-    assert loaded["_patch"] == "" and loaded["_problems"] == []
-    assert briefings.validate({**b, "mode": "yolo"}) == ["mode should be one of ['draft', 'guide']"]
+    assert loaded["_patch"] == "" and loaded["_pr"] == {} and loaded["_problems"] == []
+    assert loaded["mode"] == ("pair" if mode == "guide" else mode)  # legacy guide is read as pair
+    assert briefings.validate({**b, "mode": "yolo"}) == ["mode should be one of ['draft', 'own', 'pair']"]
+
+
+def test_legacy_guide_briefing_still_validates():
+    b = {**good_briefing(), "mode": "guide", "claim_comment": "I'd like to take this one, I think I know the cause."}
+    assert briefings.validate(b) == [] and briefings.mode_of(b) == "pair"
+    assert briefings.mode_of({}) == "draft"
+
+
+def test_pair_fields_are_lists_of_strings():
+    b = {**good_briefing(), "mode": "pair", "claim_comment": "- reproduced on main\n- looks like the binder"}
+    good = {"fix_plan": ["1. add the check"], "code_locations": ["src/a.cpp:10 - where the check goes"],
+            "explain_questions": ["Why? - because"], "pr_facts": ["- fixes #7"], "comment_facts": ["- repro attached"]}
+    assert briefings.validate({**b, **good}) == []
+    assert briefings.validate({**b, "fix_plan": "step one"}) == ["fix_plan should be a list of strings"]
+    assert briefings.validate({**b, "pr_facts": [1]}) == ["pr_facts should be a list of strings"]
+    assert briefings.validate({**b, "mode": "draft", "fix_plan": {}}) == ["fix_plan should be a list of strings"]
+
+
+@pytest.mark.parametrize("mode", ["pair", "own"])
+def test_pair_and_own_claim_comment_must_be_bullets(mode):
+    b = {**good_briefing(), "mode": mode}  # "I'd like to fix this." is paste-ready prose
+    assert len(briefings.validate(b)) == 1 and "bullet facts" in briefings.validate(b)[0]
+    assert briefings.validate({**b, "claim_comment": "- seen on 1.4\n\n- empty input only"}) == []
+    assert briefings.validate({**b, "claim_comment": "- seen on 1.4\nHi, I'd like to work on this."}) != []
+    assert briefings.validate({**b, "mode": "draft"}) == []  # draft keeps prose
 
 
 def test_ingest_adds_once(tmp_path):
@@ -232,7 +263,35 @@ def test_ready_items_carry_what_their_detail_view_needs(tmp_path):
     assert comment_item["post"] == "Reproduced on main." and comment_item["last_error"] == "GitHub said no"
     assert comment_item["briefing"]["post_target"] == "https://github.com/o/r/issues/11"
     brief = p["inbox"][3]["items"][1]
-    assert brief["briefing"]["mode"] == "guide" and "patch" not in brief and "pr" not in brief
+    assert brief["briefing"]["mode"] == "pair" and "patch" not in brief and "pr" not in brief
+
+
+def test_every_item_carries_the_three_plain_lines(tmp_path):
+    _, _, p = payload_of(tmp_path)
+    for gr in p["inbox"]:
+        for i in gr["items"]:
+            assert set(i["lines"]) == {"problem", "sending", "your_part"} and all(i["lines"].values()), i["key"]
+    pr_item = p["inbox"][1]["items"][0]
+    assert pr_item["lines"]["sending"].startswith("A pull request") and pr_item["lines"]["your_part"].startswith("Read it and tap Submit PR")
+    brief = p["inbox"][3]["items"][1]
+    assert brief["lines"]["sending"].startswith("Nothing prepared yet") and brief["lines"]["your_part"].startswith("Laptop: run /contribute")
+    waiting = p["inbox"][0]["items"][0]
+    assert waiting["lines"]["problem"].startswith("A maintainer replied")
+
+
+def test_template_leads_with_the_three_lines_then_the_four_sections_in_order():
+    html = (ROOT / "dashboard" / "template.html").read_text()
+    for label in ("What's broken", "You'd send", "Your part"):
+        assert label in html
+    titles = ["What changed, file by file", "If the maintainer asks…", "What was tested, and what wasn't", "The code"]
+    at = [html.index(f'fold("{t}"') for t in titles]
+    assert at == sorted(at)
+    ready = html[html.index("function readyFolds"):]
+    assert [ready.index(f) for f in ("filesFold(b)", "qaFold(b)", "testedFold(b)", "codeFold(it.patch)")] == sorted(
+        ready.index(f) for f in ("filesFold(b)", "qaFold(b)", "testedFold(b)", "codeFold(it.patch)"))
+    detail = html[html.index("function detailReady"):html.index("function prepareBlock")]
+    assert detail.index("threeLines(it)") < detail.index("problemsHtml(it)") < detail.index("${readyFolds(it)}") < detail.index("${fields}")
+    assert 'name="title"' in detail and 'name="body"' in detail and "Submit PR" in detail  # the edit fields and Submit stay
 
 
 def test_followup_content_is_embedded(tmp_path):
@@ -339,3 +398,12 @@ def test_dashboard_renders_with_no_data(tmp_path):
     assert [g["items"] for g in p["inbox"]] == [[], [], [], [], []] and p["to_do"] == 0 and p["in_flight"] == []
     assert p["digest"] == {} and p["note"] == ""
     assert embedded(render.render(config.load(), tmp_path, statemod.load(tmp_path)).read_text())["to_do"] == 0
+
+
+def test_inbox_items_carry_a_headline_apart_from_the_lines(tmp_path):
+    _, _, p = payload_of(tmp_path)
+    for gr in p["inbox"]:
+        for i in gr["items"]:
+            if gr["id"] != "waiting":
+                assert i["headline"] and "headline" not in i["lines"], i["key"]
+    assert p["inbox"][1]["items"][0]["headline"] == "Fix it"  # a draft PR borrows pr.json's title
