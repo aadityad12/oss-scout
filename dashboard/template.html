@@ -133,6 +133,8 @@ details.snoozed .rows { display: grid; gap: 10px; margin-top: 10px; }
 .head .t code, .pf .head-t code { padding: 0 4px; font-size: .86em; }
 .head .t { font: 600 17px/1.4 var(--body); color: var(--ink); overflow-wrap: anywhere; text-wrap: pretty; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .item.open .head .t { -webkit-line-clamp: unset; }
+.head .p { font-size: 15px; color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.item.open .head .p { display: none; }
 .chev { flex: none; width: 20px; height: 20px; margin-top: 2px; color: var(--muted); transition: transform .15s; }
 .item.open .chev { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
@@ -147,9 +149,11 @@ details.snoozed .rows { display: grid; gap: 10px; margin-top: 10px; }
 .read30 { display: grid; gap: 14px; background: var(--well); border-radius: 12px; padding: 16px; }
 .read30 .l { display: grid; gap: 2px; }
 .read30 .lab { font: 600 13px var(--body); color: var(--muted); }
+.read30 .l + .l { padding-top: 14px; border-top: 1px solid var(--line); }
+.read30.three .v { font-size: 17px; line-height: 1.5; }
 .read30 .v { color: var(--ink); overflow-wrap: anywhere; }
 @media (min-width: 600px) {
-  .read30 .l { grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
+  .read30 .l { grid-template-columns: 120px minmax(0, 1fr); gap: 12px; }
   .read30 .lab { line-height: 1.9; }
 }
 .err { color: var(--alert); font-weight: 600; font-size: 15px; overflow-wrap: anywhere; background: var(--alert-soft); border: 1px solid var(--alert-line); border-radius: 10px; padding: 10px 14px; }
@@ -199,6 +203,10 @@ details.fold > summary::-webkit-details-marker { display: none; }
 details.fold > summary::after { content: "+"; font: 500 20px/1 var(--body); color: var(--muted); }
 details.fold[open] > summary::after { content: "\2212"; }
 details.fold > .inner { padding: 0 0 16px; display: grid; gap: 12px; }
+details.fold > .inner > .diff { max-height: 360px; }
+.files { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.tested { display: grid; gap: 10px; }
+.tested p { margin: 0; }
 .folds { display: grid; }
 .foot-note { margin: 0; font-size: 13px; color: var(--muted); }
 .linkbtn { appearance: none; border: 0; background: none; color: var(--accent-text); font: 600 15px var(--body); min-height: 44px; padding: 0 4px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
@@ -393,35 +401,71 @@ const FLIGHT = {
   claimed: ["Claimed", ""], submitting: ["Sending now", "on"], approved: ["Approved, not sent", "attn"], pr_open: ["PR open", ""],
 };
 
-/* ---------- the 30-second read ---------- */
+/* ---------- the three lines every item leads with ---------- */
 
 // how a suggestion is worked: draft ready = one tap; pair / own = on the laptop (a legacy "guide" is read as pair upstream)
 const MODE_LABEL = { pair: "Laptop · pair", own: "Laptop · you write it" };
-function read30(it) {
-  const b = it.briefing || {}, pr = it.pr || {}, tests = b.tests || {};
-  const fix = (it.pr && pr.title) || firstSentence(b.change_explained);
-  let proof;
-  if (b.mode === "own") proof = "You write the fix and its tests.";
-  else if (b.mode === "pair") proof = "Claude writes it with you; you write every post.";
-  else proof = tests.ran ? `Tests ran${tests.result ? `: ${esc(firstSentence(tests.result, 110))}` : ""}` : `Tests <span class="bad">not run</span>`;
-  const conf = firstSentence(b.confidence, 150).replace(/[.]$/, "");
-  const line = (lab, html) => html ? `<div class="l"><span class="lab">${lab}</span><span class="v">${html}</span></div>` : "";
-  return `<section class="sec" aria-label="30-second read"><h4>30-second read</h4><div class="read30">
-    ${line("Broken", esc(firstSentence(b.summary)))}
-    ${line("Fix", esc(fix))}
-    ${line("Confidence", `${conf ? `${esc(conf)} · ` : ""}${proof}`)}
-    ${line("Main risk", esc(firstSentence(b.risks)))}
+// What's broken / what you'd send / what you do and how long. The text is computed by scout/plain.py.
+function threeLines(it) {
+  const L = it.lines || {}, b = it.briefing || {};
+  const problem = L.problem || b.plain_problem || firstSentence(b.summary);
+  const line = (lab, text) => text ? `<div class="l"><span class="lab">${lab}</span><span class="v">${esc(text)}</span></div>` : "";
+  return `<section class="sec" aria-label="The short version"><div class="read30 three">
+    ${line("What's broken", problem)}
+    ${line("You'd send", L.sending)}
+    ${line("Your part", L.your_part)}
   </div></section>`;
 }
 
 const fold = (title, inner) => inner ? `<details class="fold"><summary>${title}</summary><div class="inner">${inner}</div></details>` : "";
-function folds(b, withWhy) {
+
+// files_explained is ["path: one plain line", ...]
+function filesFold(b) {
+  const rows = (b.files_explained || []).map(x => {
+    const at = String(x).indexOf(": ");
+    return at > 0 ? `<li><code>${esc(x.slice(0, at))}</code><br>${esc(x.slice(at + 2))}</li>` : `<li>${esc(x)}</li>`;
+  }).join("");
+  return fold("What changed, file by file", rows ? `<ul class="files">${rows}</ul>` : "");
+}
+
+function qaFold(b) {
   const qa = (b.maintainer_qa || []).map(x => `<div><b>${esc(x.q)}</b><div class="md">${md(x.a)}</div></div>`).join("");
+  return fold("If the maintainer asks…", qa ? `<div class="qa">${qa}</div>` : "");
+}
+
+// tests.result and tests.not_verified in plain sentences; the command itself is jargon and stays out
+function testedFold(b) {
+  const t = b.tests || {};
+  if (!Object.keys(t).length) return "";
+  const rows = [
+    t.ran ? `<p><b>Tests ran.</b> ${esc(plain(t.result))}</p>` : `<p><b class="bad">Tests were not run.</b></p>`,
+    t.not_verified ? `<p><b>Not checked:</b> ${esc(plain(t.not_verified))}</p>` : "",
+    b.risks ? `<p><b>Main risk:</b> ${esc(plain(b.risks))}</p>` : "",
+  ].join("");
+  return fold("What was tested, and what wasn't", `<div class="tested">${rows}</div>`);
+}
+
+const codeFold = patch => fold("The code", patch ? diffHtml(patch) : "");
+
+function folds(b, withWhy) {
   const alts = (b.alternatives || []).map(a => `<li>${code(a)}</li>`).join("");
   const out = [
     withWhy ? fold("Why this one", `<div class="md">${md(b.why)}</div>`) : "",
     withWhy ? fold(b.mode === "pair" || b.mode === "own" ? "What the fix needs to do" : "The change, explained", `<div class="md">${md(b.change_explained)}</div>`) : "",
-    fold("Be ready for review", qa ? `<div class="qa">${qa}</div>` : ""),
+    qaFold(b),
+    testedFold(b),
+    fold("How the code works", `<div class="md">${md(b.walkthrough)}</div>`),
+    fold("Alternatives considered", alts ? `<ul>${alts}</ul>` : ""),
+  ].join("");
+  return out ? `<div class="folds">${out}</div>` : "";
+}
+
+// a prepared item: the four sections in reading order, then the background
+function readyFolds(it) {
+  const b = it.briefing || {};
+  const alts = (b.alternatives || []).map(a => `<li>${code(a)}</li>`).join("");
+  const out = [
+    filesFold(b), qaFold(b), testedFold(b), codeFold(it.patch),
     fold("How the code works", `<div class="md">${md(b.walkthrough)}</div>`),
     fold("Alternatives considered", alts ? `<ul>${alts}</ul>` : ""),
   ].join("");
@@ -473,7 +517,6 @@ function detailReady(it) {
   const isPr = (it.kind || "pr") === "pr";
   const target = b.post_target || it.post_target || "";
   const fields = isPr ? `
-    <section class="sec"><h4>The change</h4>${it.patch ? diffHtml(it.patch) : `<p class="note">No diff on file.</p>`}</section>
     <section class="sec"><h4>Pull request text</h4>
       <label class="field">Title<input name="title" maxlength="256" value="${esc(pr.title)}"></label>
       ${pr.disclosure ? `<p class="disclosure"><b>Keep this sentence in the description.</b> The project asks for it: <mark>${esc(pr.disclosure)}</mark></p>` : ""}
@@ -486,10 +529,10 @@ function detailReady(it) {
   const verb = isPr ? "Submit PR" : "Post comment";
   const canRefresh = isPr && it.failure && it.failure.fix_action === "refresh" && !it.refresh_pending;
   return `<div class="detail" data-key="${esc(it.key)}" data-slug="${esc(it.slug)}" data-repo="${esc(it.repo)}" data-target="${esc(target)}">
-    ${read30(it)}
+    ${threeLines(it)}
     ${problemsHtml(it)}
+    ${readyFolds(it)}
     ${fields}
-    ${folds(b, false)}
     ${modelsLine(b)}
     ${it.pairing ? `<p class="note">In your pairing queue. <button class="linkbtn" type="button" data-act="unpair">Unpair</button></p>` : ""}
     ${bar([...(canRefresh ? [["refresh", "Refresh &amp; send", "primary"]] : []), [isPr ? "submit" : "post", verb, canRefresh ? "" : "primary"], ["later", "Later"], ["skip", "Skip", "danger"]])}
@@ -511,7 +554,7 @@ function detailBriefing(it) {
   const canPark = ["suggested", "ready", "approved"].includes(it.status);
   const pairBtn = it.pairing ? [["unpair", "Unpair", "wide"]] : [["pair", "Pair on laptop", defs.length ? "wide" : "primary"]];
   return `<div class="detail" data-key="${esc(it.key)}" data-slug="${esc(it.slug)}" data-repo="${esc(it.repo)}">
-    ${read30(it)}
+    ${threeLines(it)}
     ${it.demoted_reason ? `<p class="reason">${esc(it.demoted_reason)}</p>` : ""}
     ${blocked}
     ${it.pairing ? `<section class="sec"><h4>On your laptop</h4><p class="note">Start a Claude Code session in the oss-scout repo and paste:</p>${copyBlock(`/contribute ${it.key}`)}</section>` : ""}
@@ -534,7 +577,7 @@ function detailWaiting(w) {
   if (f && f.kind === "small" && !f.done) {
     const addressed = (f.comments_addressed || []).map(c => `<li>${code(c)}</li>`).join("");
     const bad = (f.problems || []).length;
-    return `<div class="detail" ${attrs}>${head}
+    return `<div class="detail" ${attrs}>${threeLines(w)}${head}
       ${addressed ? `<section class="sec"><h4>What this fixes</h4><div class="facts"><ul>${addressed}</ul></div></section>` : ""}
       ${bad ? `<div class="err">Needs attention before it can be sent: ${esc(f.problems.join("; "))}</div>` : ""}
       ${f.patch ? `<section class="sec"><h4>The fix</h4>${diffHtml(f.patch)}</section>` : ""}
@@ -543,12 +586,12 @@ function detailWaiting(w) {
     </div>`;
   }
   if (f && f.kind === "discuss") {
-    return `<div class="detail" ${attrs}>${head}
+    return `<div class="detail" ${attrs}>${threeLines(w)}${head}
       <section class="sec"><h4>Talking points</h4><div class="facts"><ul>${(f.talking_points || []).map(t => `<li>${code(t)}</li>`).join("")}</ul></div></section>
       <section class="sec"><h4>Take this to your laptop</h4><p class="note">Start it with <code>/contribute</code> and the PR link:</p>${copyBlock(`/contribute ${w.pr_url}`)}</section>
     </div>`;
   }
-  return `<div class="detail" ${attrs}>${head}
+  return `<div class="detail" ${attrs}>${threeLines(w)}${head}
     ${failureHtml(w.failure)}
     <p class="reason">${f && f.done ? "Your reply went out. The next scan will confirm." : "A draft is on its way (usually within the hour)."} ${link(w.pr_url, "Open the PR to reply yourself ↗")}</p>
   </div>`;
@@ -576,12 +619,12 @@ function rowParts(it, group) {
   const b = it.briefing || {};
   if (group === "waiting") {
     const h = hoursSince(it.since), late = it.overdue || h > 48;
-    return { ref: `${it.repo}#${it.pr_number}`, title: it.title, late,
+    return { ref: `${it.repo}#${it.pr_number}`, title: it.title, late, sub: "",
       chips: `<span class="st ${late ? "attn" : ""}">${late ? "Overdue" : "Waiting"} ${esc(waitLabel(h))}</span>`, age: "" };
   }
   if (group === "flight") {
     const [label, cls] = FLIGHT[it.status] || [it.status, ""];
-    return { ref: `${it.repo}#${it.number}`, title: it.title, late: false, chips: `<span class="st ${cls}">${esc(label)}</span>`, age: short(it.updated_at || it.created_at) };
+    return { ref: `${it.repo}#${it.number}`, title: it.title, late: false, sub: "", chips: `<span class="st ${cls}">${esc(label)}</span>`, age: short(it.updated_at || it.created_at) };
   }
   const title = b.title || it.title;
   let chips = "";
@@ -594,7 +637,7 @@ function rowParts(it, group) {
     chips = `${MODE_LABEL[b.mode] ? `<span class="tag">${MODE_LABEL[b.mode]}</span>` : b.difficulty ? `<span class="tag">${esc(b.difficulty)}</span>` : ""}${it.pairing ? `<span class="tag">Pairing</span>` : ""}${it.prepare_requested_at ? `<span class="st on">Requested</span>` : ""}`;
   }
   if (group === "snoozed") chips += `<span class="tag">Back ${esc(inDays(it.snoozed_until))}</span>`;
-  return { ref: it.key, title, late: !!it.failure && !it.refresh_pending && group === "ready", chips, age: short(it.suggested_at) };
+  return { ref: it.key, title, sub: (it.lines || {}).problem || "", late: !!it.failure && !it.refresh_pending && group === "ready", chips, age: short(it.suggested_at) };
 }
 
 function rowHtml(it, group) {
@@ -604,6 +647,7 @@ function rowHtml(it, group) {
     <button class="head" type="button" aria-expanded="false">
       <span class="top-line">${p.chips}<span class="ref">${esc(p.ref)}</span><span class="sp"></span><span class="age">${esc(p.age)}</span></span>
       <span class="title-line"><span class="t">${code(p.title)}</span>${CHEV}</span>
+      ${p.sub ? `<span class="p">${esc(p.sub)}</span>` : ""}
     </button>
   </article>`;
 }

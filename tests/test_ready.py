@@ -316,14 +316,16 @@ def test_digest_lists_ready_waiting_and_new(tmp_path):
     d = digest.build(config.load(), tmp_path, dstate(suggestions=suggestions,
                                                      contributions={"prs": prs}), NOW)
     assert d["send"] is True
-    assert d["ready"] == [{"key": "o/r#1", "title": "A", "kind": "repro", "slug": "o__r__1"}]
+    assert [(i["key"], i["title"], i["kind"], i["slug"]) for i in d["ready"]] == [("o/r#1", "A", "repro", "o__r__1")]
+    assert {"problem", "sending", "your_part"} <= set(d["ready"][0]) <= {"key", "title", "kind", "slug", "problem", "sending", "your_part"}
     assert d["new_briefings"] == [{"key": "o/r#2", "title": "B", "kind": "pr", "slug": "o__r__2"},
                                   {"key": "o/r#3", "title": "C", "kind": "pr", "slug": "o__r__3"}]
-    assert d["waiting_on_you"] == [
+    assert [{k: w[k] for k in ("key", "slug", "pr_url", "since", "overdue")} for w in d["waiting_on_you"]] == [
         {"key": "o/r#5", "slug": "o__r__5", "pr_url": "https://github.com/o/r/pull/5",
          "since": "2026-09-30T09:00:00Z", "overdue": True},
         {"key": "x/y#6", "slug": "x__y__6", "pr_url": "https://github.com/x/y/pull/6",
          "since": "2026-10-02T09:00:00Z", "overdue": False}]
+    assert all({"problem", "sending", "your_part"} <= set(w) for w in d["waiting_on_you"])
     assert d["pairing"] == []
 
 

@@ -183,15 +183,17 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
      "comment_facts": ["pair/own only, optional: bullet facts for the claim comment"],
      "post_target": "URL of the issue or PR to comment on (ready repro/triage/review only)",
      "models_used": [{"model": "sonnet", "did": "triage, draft, briefing"}, {"model": "opus", "did": "root cause"}],
+     "plain_problem": "ONE sentence, no file names, function names or code, for someone who doesn't know the project: what is broken and who it hurts. E.g. 'A script that converts robot configs into FusionCore configs has no tests, and it crashes with a confusing error on empty files.'",
      "summary": "The issue in 2-4 plain-English sentences.",
      "why": "Why this issue, for this person, now. Mention the repo's merge stats.",
      "difficulty": "easy | medium | hard",
      "time_estimate": "e.g. 45-90 min for review + local testing",
      "walkthrough": "Markdown. How the relevant part of the codebase works: files, functions, data flow. Define every project-specific term. Written for someone fluent in the language but new to this codebase.",
      "change_explained": "Markdown. Draft mode: the change piece by piece, what each hunk does and why. Pair and own mode: the root cause, where a fix belongs and what it must do, the traps to avoid, and a test plan, but no code.",
+     "files_explained": ["optional, draft only: one string per file in draft.patch, 'path: one plain line on what changed there', e.g. 'tools/test_conv.py: new tests that feed the converter empty and broken files and check it fails with a clear message'"],
      "alternatives": ["Other approach — why it was rejected"],
      "maintainer_qa": [{"q": "A question a reviewer is likely to ask", "a": "A good answer, in the contributor's voice"}],
-     "tests": {"ran": true, "command": "...", "result": "...", "not_verified": "What still needs checking, and how"},
+     "tests": {"ran": true, "command": "...", "result": "plain words: what ran and what it showed", "not_verified": "plain words: what still needs checking, and how"},
      "claim_comment": "Draft mode: a short, specific, humble comment for the HUMAN to post on the issue before starting (their plan in 2-3 sentences). No mention of automation. Pair and own mode: bullet facts only, every line starting with '- '; never text to paste.",
      "submit_steps": ["Fork owner/repo", "git checkout -b fix-123", "git apply draft.patch", "..."],
      "ai_disclosure": "What this repo's policy asks for about AI assistance, and whether the PR body carries the disclosure sentence.",
@@ -199,6 +201,15 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
      "risks": "What could make this fix wrong or unwelcome"
    }
    ```
+
+   **Plain words.** The owner reads `plain_problem` first, in the email and on the card,
+   before anything else, and often decides from it alone. Write it for a smart person who
+   has never heard of the project: what is broken and who it hurts, in one sentence, with
+   no file names, function names, error codes or backticks. It is required for every
+   pick. The dashboard works out "what you'd send" and "how long it takes" itself from
+   the patch and `time_estimate`, so keep `time_estimate` honest (include the build).
+   For a ready PR also write `files_explained`: every file in `draft.patch`, one line
+   each, in plain words (code words are fine here, jargon isn't).
 
    **Files for a ready item** (same folder):
    - kind `pr`: `draft.patch` (`git diff` against the upstream default branch HEAD, ready

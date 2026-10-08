@@ -266,6 +266,34 @@ def test_ready_items_carry_what_their_detail_view_needs(tmp_path):
     assert brief["briefing"]["mode"] == "pair" and "patch" not in brief and "pr" not in brief
 
 
+def test_every_item_carries_the_three_plain_lines(tmp_path):
+    _, _, p = payload_of(tmp_path)
+    for gr in p["inbox"]:
+        for i in gr["items"]:
+            assert set(i["lines"]) == {"problem", "sending", "your_part"} and all(i["lines"].values()), i["key"]
+    pr_item = p["inbox"][1]["items"][0]
+    assert pr_item["lines"]["sending"].startswith("A pull request") and pr_item["lines"]["your_part"].startswith("Read it and tap Submit PR")
+    brief = p["inbox"][3]["items"][1]
+    assert brief["lines"]["sending"].startswith("Nothing prepared yet") and brief["lines"]["your_part"].startswith("Laptop: run /contribute")
+    waiting = p["inbox"][0]["items"][0]
+    assert waiting["lines"]["problem"].startswith("A maintainer replied")
+
+
+def test_template_leads_with_the_three_lines_then_the_four_sections_in_order():
+    html = (ROOT / "dashboard" / "template.html").read_text()
+    for label in ("What's broken", "You'd send", "Your part"):
+        assert label in html
+    titles = ["What changed, file by file", "If the maintainer asks…", "What was tested, and what wasn't", "The code"]
+    at = [html.index(f'fold("{t}"') for t in titles]
+    assert at == sorted(at)
+    ready = html[html.index("function readyFolds"):]
+    assert [ready.index(f) for f in ("filesFold(b)", "qaFold(b)", "testedFold(b)", "codeFold(it.patch)")] == sorted(
+        ready.index(f) for f in ("filesFold(b)", "qaFold(b)", "testedFold(b)", "codeFold(it.patch)"))
+    detail = html[html.index("function detailReady"):html.index("function prepareBlock")]
+    assert detail.index("threeLines(it)") < detail.index("problemsHtml(it)") < detail.index("${readyFolds(it)}") < detail.index("${fields}")
+    assert 'name="title"' in detail and 'name="body"' in detail and "Submit PR" in detail  # the edit fields and Submit stay
+
+
 def test_followup_content_is_embedded(tmp_path):
     _, _, p = payload_of(tmp_path)
     w = {i["key"]: i for i in p["inbox"][0]["items"]}

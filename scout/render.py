@@ -5,7 +5,8 @@ the same as `briefings.slug`) so an email link can open it. The payload is:
 
   inbox        groups in order: waiting, ready, pairing, briefings, snoozed. Each item carries
                everything its detail view needs (briefing, patch, pr.json, post text, follow-up,
-               and for a failed send its `failure` record and whether a refresh is pending)
+               and for a failed send its `failure` record and whether a refresh is pending) and
+               `lines`: the three plain lines the card leads with {problem, sending, your_part}
   to_do        how many items need you today (everything in the inbox except snoozed)
   note         last night's note about why there is (or isn't) a ready item
   in_flight    open PRs, plus claimed, submitting and approved items
@@ -24,7 +25,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import briefings, digest as digestmod, public, refresh, wip
+from . import briefings, digest as digestmod, plain, public, refresh, wip
 from .config import ROOT, Config
 
 UNSENT = ("ready", "approved", "submitting")
@@ -83,7 +84,9 @@ def waiting_items(data: Path, st: dict, now: datetime) -> list[dict]:
     out = []
     for w in digestmod.waiting_on_you(st, now):
         pr, s = prs.get(w["pr_url"], {}), st["suggestions"].get(w["key"])
-        out.append({**w, "title": pr.get("title") or (s or {}).get("title", ""), "repo": pr.get("repo"),
+        title = pr.get("title") or (s or {}).get("title", "")
+        out.append({**w, "title": title, "repo": pr.get("repo"),
+                    "lines": plain.reply_lines(title, (s or {}).get("followup_kind")),
                     "failure": (s or {}).get("failure"),
                     "pr_number": pr.get("number"), "comments": pr.get("review_comments", []),
                     "followup": followup_of(data, s)})
@@ -119,7 +122,8 @@ def build_payload(cfg: Config, data: Path, st: dict, now: datetime | None = None
         b = all_b.get(key, {})
         it = {**s, "key": key, "slug": briefings.slug(key), "group": group,
               "briefing": {k: v for k, v in b.items() if not k.startswith("_")},
-              "refresh_pending": refresh.pending(s, now)}  # a rebuild was asked for and has no answer yet
+              "refresh_pending": refresh.pending(s, now),  # a rebuild was asked for and has no answer yet
+              "lines": digestmod.lines_of(s, b, now)}
         if s.get("status") in UNSENT:  # only what the one-tap flow edits and sends
             it.update(patch=b.get("_patch", ""), pr=b.get("_pr", {}), post=b.get("_post", ""),
                       problems=b.get("_problems", []))

@@ -50,6 +50,8 @@ MODES = {"draft", "pair", "own"}
 LEGACY_MODES = {"guide": "pair"}  # the old "no code from Claude" mode, read as pair
 # pair / own briefings may carry these; each is a list of strings
 PAIR_FIELDS = ("fix_plan", "code_locations", "explain_questions", "pr_facts", "comment_facts")
+# optional plain-language fields (see plain.py; older briefings fall back without them):
+# plain_problem is one sentence for a non-expert, files_explained is ["path: one plain line", ...]
 KINDS = {"pr", "repro", "triage", "review"}
 FOLLOWUP_KINDS = {"small", "discuss"}
 PR_FIELDS = ("title", "body", "branch", "base")
@@ -75,7 +77,7 @@ def validate(b: dict, folder: Path | None = None) -> list[str]:
     problems = [f"missing {k}" for k in REQUIRED if k not in b]
     if mode_of(b) not in MODES:
         problems.append(f"mode should be one of {sorted(MODES)}")
-    problems += _pair_problems(b)
+    problems += _pair_problems(b) + _plain_problems(b)
     problems += [f"{k} should be {t.__name__}" for k, t in REQUIRED.items()
                  if k in b and not isinstance(b[k], t)]
     kind = b.get("kind", "pr")
@@ -104,6 +106,16 @@ def _pair_problems(b: dict) -> list[str]:
         if not all(ln.lstrip().startswith("- ") for ln in lines):
             problems.append("claim_comment in a pair/own briefing should be bullet facts (each line starts with '- '), "
                             "not text to paste")
+    return problems
+
+
+def _plain_problems(b: dict) -> list[str]:
+    problems = []
+    if "plain_problem" in b and not (isinstance(b["plain_problem"], str) and b["plain_problem"].strip()):
+        problems.append("plain_problem should be a non-empty string")
+    fe = b.get("files_explained")
+    if "files_explained" in b and not (isinstance(fe, list) and all(isinstance(x, str) and x.strip() for x in fe)):
+        problems.append("files_explained should be a list of strings")
     return problems
 
 

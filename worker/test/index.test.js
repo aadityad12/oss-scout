@@ -1,7 +1,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  handle, verifyAccess, resetCertCache, parseAct, buildEmail, buildAlertEmail, sendDigest, sendAlerts, dispatchTrack,
+  handle, verifyAccess, resetCertCache, parseAct, buildEmail, buildWeeklyEmail, buildAlertEmail, sendDigest, sendWeekly, sendAlerts, dispatchTrack,
   route, inQuietHours, toBase64, ACTIONS,
 } from "../src/index.js";
 
@@ -309,95 +309,177 @@ test("lists the latest runs of the act workflow", async () => {
 
 // -- the daily email --------------------------------------------------------------------
 
+const LINES = {
+  problem: "A script that converts robot configs into FusionCore configs has no tests, and it crashes on empty files.",
+  sending: "A pull request: 1 new test file and a small fix (3 files, ~120 lines)",
+  your_part: "Read it and tap Submit PR, about 2 minutes",
+};
+const STUCK = {
+  key: "manankharwar/fusioncore#161", slug: "manankharwar__fusioncore__161", title: "Add <tests> for the converter", kind: "pr",
+  plain: "Couldn't send: fusioncore changed ci.yml on Oct 5, after this draft was written.",
+  why: "The project edited ci.yml, so the saved change no longer fits.", fix_action: "refresh", refresh_by: "2026-10-12", refreshing: false,
+  ...LINES, your_part: "Tap Refresh & send by Oct 12",
+};
+
 const DIGEST = {
   date: "2026-10-02",
-  ready: [{ key: "o/r#1", title: "Fix <b>crash</b> & more", kind: "pr", slug: "o__r__1" }],
-  waiting_on_you: [{ key: "o/r#2", pr_url: "https://github.com/o/r/pull/2", overdue: true, slug: "o__r__2" }, { key: "x/y#3", overdue: false }],
-  new_briefings: [{ key: "o/r#4", title: "Something \"new\"", kind: "pr", slug: "o__r__4" }],
+  ready: [{ key: "o/r#1", title: "Fix <b>crash</b> & more", kind: "pr", slug: "o__r__1", ...LINES }],
+  waiting_on_you: [
+    { key: "o/r#2", pr_url: "https://github.com/o/r/pull/2", overdue: true, slug: "o__r__2",
+      problem: "A maintainer replied on your pull request: Fix the crash", sending: "A reply to the maintainer", your_part: "Read the draft and tap Push fix & reply, about 2 minutes" },
+    { key: "x/y#3", overdue: false },
+  ],
+  weekly: [],
   token_age_days: 85, token_warning: true, send: true,
 };
 
-test("builds a short escaped email", () => {
+test("builds an escaped email whose items lead with the three plain lines and one button", () => {
   const m = buildEmail(DIGEST, ENV);
-  assert.equal(m.subject, "2 replies overdue · 1 ready · 1 new · token needs rotating");
+  assert.equal(m.subject, "1 PR ready to send · Maintainers replied on 2 PRs · GitHub key needs replacing");
   assert.match(m.html, /Fix &lt;b&gt;crash&lt;\/b&gt; &amp; more/);
   assert.doesNotMatch(m.html, /<b>crash/);
-  assert.match(m.html, /Something &quot;new&quot;/);
-  assert.match(m.html, /overdue/);
+  for (const label of ["What's broken", "You'd send", "Your part"]) assert.match(m.html, new RegExp(`>${label.replace("'", "(?:'|&#39;)")}<`));
+  assert.match(m.html, /crashes on empty files/);
+  assert.match(m.html, /1 new test file and a small fix/);
+  assert.match(m.html, /Read it and tap Submit PR, about 2 minutes/);
   assert.match(m.html, /85 days old/);
-  assert.match(m.html, /href="https:\/\/me\.aadityad\.dev"/);
-  assert.match(m.text, /https:\/\/me\.aadityad\.dev/);
+  assert.match(m.html, /Waiting more than 2 days/);
+  assert.match(m.html, /href="https:\/\/me\.aadityad\.dev"/); // the dashboard button at the end
+  // the three lines come after the title and before the item's button
+  const card = m.html.slice(m.html.indexOf("Fix &lt;b&gt;"));
+  assert.ok(card.indexOf("What's broken") < card.indexOf("You'd send") && card.indexOf("Your part") < card.indexOf("Review and send"));
 });
 
-test("digest items link to their place on the dashboard when they have a slug", () => {
-  const m = buildEmail(DIGEST, ENV);
-  for (const slug of ["o__r__1", "o__r__2", "o__r__4"]) assert.match(m.html, new RegExp(`href="https://me\\.aadityad\\.dev/#${slug}"`));
-  assert.equal(m.html.match(/href="https:\/\/me\.aadityad\.dev\/#/g).length, 3); // x/y#3 has no slug, so no link
+test("the sections come in order: couldn't send, ready to send, a maintainer replied; each only when it has items", () => {
+  const m = buildEmail({ ...DIGEST, stuck: [STUCK] }, ENV);
+  const at = (s) => m.html.indexOf(s);
+  assert.ok(at(">Couldn&#39;t send</h2>") > 0 && at(">Couldn&#39;t send</h2>") < at(">Ready to send</h2>") && at(">Ready to send</h2>") < at(">A maintainer replied</h2>"));
+  const onlyReady = buildEmail({ ...DIGEST, stuck: [], waiting_on_you: [], token_warning: false }, ENV);
+  assert.match(onlyReady.html, />Ready to send</);
+  assert.doesNotMatch(onlyReady.html, /Couldn(?:'|&#39;)t send|A maintainer replied/);
+  const t = m.text;
+  assert.ok(t.indexOf("COULDN'T SEND") < t.indexOf("READY TO SEND") && t.indexOf("READY TO SEND") < t.indexOf("A MAINTAINER REPLIED"));
+});
+
+test("each item has exactly one button, deep-linking to it", () => {
+  const m = buildEmail({ ...DIGEST, stuck: [STUCK] }, ENV);
+  for (const slug of ["manankharwar__fusioncore__161", "o__r__1", "o__r__2"]) {
+    assert.equal(m.html.split(`href="https://me.aadityad.dev/#${slug}"`).length - 1, 1, slug);
+  }
+  assert.equal(m.html.match(/href="https:\/\/me\.aadityad\.dev\/#/g).length, 3); // x/y#3 has no slug, so no button
   assert.match(m.html, /x\/y#3/);
-  const hostile = { ...DIGEST, ready: [{ key: "o/r#1", title: "t", slug: 'a"b c/d' }], waiting_on_you: [], new_briefings: [] };
+  const hostile = { ...DIGEST, ready: [{ key: "o/r#1", title: "t", slug: 'a"b c/d' }], waiting_on_you: [] };
   assert.match(buildEmail(hostile, ENV).html, /href="https:\/\/me\.aadityad\.dev\/#a%22b%20c%2Fd"/);
   assert.match(buildEmail(DIGEST, { ...ENV, DASHBOARD_URL: "https://me.aadityad.dev/" }).html, /href="https:\/\/me\.aadityad\.dev\/#o__r__1"/);
 });
 
-test("the digest subject names what needs you, most urgent first", () => {
-  const w = (key) => ({ key, overdue: false });
-  const one = { ...DIGEST, waiting_on_you: [w("pydantic/pydantic#9002")], ready: [DIGEST.ready[0]], new_briefings: [DIGEST.new_briefings[0], DIGEST.new_briefings[0]], token_warning: false };
-  assert.equal(buildEmail(one, ENV).subject, "Reply needed on pydantic/pydantic#9002 · 1 ready · 2 new");
-  assert.equal(buildEmail({ ...one, waiting_on_you: [w("a/b#1"), w("c/d#2")] }, ENV).subject, "2 replies needed · 1 ready · 2 new");
-  assert.equal(buildEmail({ ...one, waiting_on_you: [] }, ENV).subject, "1 ready · 2 new");
-  assert.equal(buildEmail({ ...one, ready: [], new_briefings: [] }, ENV).subject, "Reply needed on pydantic/pydantic#9002");
-  assert.equal(buildEmail({ ...one, waiting_on_you: [], ready: [], new_briefings: [], token_warning: true }, ENV).subject, "token needs rotating");
-  assert.equal(buildEmail({ ...one, waiting_on_you: [], ready: [], new_briefings: [] }, ENV).subject, "Nothing needs you today");
-  assert.equal(buildEmail({ ...one, waiting_on_you: [w("a/b#1")], token_warning: true }, ENV).subject, "Reply needed on a/b#1 · 1 ready · 2 new · token needs rotating");
-});
-
-const STUCK = {
-  key: "manankharwar/fusioncore#161", slug: "manankharwar__fusioncore__161", title: "Add <tests> for the converter",
-  plain: "Couldn't send: fusioncore changed ci.yml on Oct 5, after this draft was written.",
-  why: "The project edited ci.yml, so the saved change no longer fits.", fix_action: "refresh", refresh_by: "2026-10-12", refreshing: false,
-};
-
-test("a failed send leads the email, with the reason and the refresh-by date", () => {
+test("the plain text carries the same content as the html", () => {
   const m = buildEmail({ ...DIGEST, stuck: [STUCK] }, ENV);
-  assert.equal(m.subject, "Couldn't send manankharwar/fusioncore#161 · 2 replies overdue · 1 ready · 1 new · token needs rotating");
-  assert.ok(m.html.indexOf("Couldn't send</h2>") > 0 && m.html.indexOf("Couldn't send</h2>") < m.html.indexOf("Ready for one tap"));
-  assert.ok(m.html.indexOf("Couldn't send</h2>") < m.html.indexOf("Waiting on you"));
-  assert.match(m.html, /Couldn(?:'|&#39;)t send: fusioncore changed ci\.yml on Oct 5, after this draft was written\./);
-  assert.match(m.html, /no longer fits/);
-  assert.match(m.html, /Refresh by Oct 12\./);
-  assert.match(m.html, /href="https:\/\/me\.aadityad\.dev\/#manankharwar__fusioncore__161"/);
-  assert.match(m.html, /Add &lt;tests&gt; for the converter/); // escaped
-  assert.match(m.text, /^OSS Scout 2026-10-02\nCouldn't send:\nCouldn't send: fusioncore changed ci\.yml on Oct 5, after this draft was written\. The project edited ci\.yml, so the saved change no longer fits\. Refresh by Oct 12\. \(manankharwar\/fusioncore#161\)/);
+  for (const needle of [
+    "Fix <b>crash</b> & more", "o/r#1", `What's broken: ${LINES.problem}`, `You'd send: ${LINES.sending}`, `Your part: ${LINES.your_part}`,
+    "https://me.aadityad.dev/#o__r__1", "Waiting more than 2 days", "Why: The project edited ci.yml", "Refresh by Oct 12",
+    "https://me.aadityad.dev/#manankharwar__fusioncore__161", "85 days old",
+  ]) assert.ok(m.text.includes(needle), needle);
+  assert.doesNotMatch(m.text, /<div|<a |&amp;|&#39;/); // text is not html
 });
 
-test("the stuck section says when a refresh is already running, and only appears with something stuck", () => {
+test("the subject is plain and says what to do", () => {
+  const w = (key) => ({ key, overdue: false });
+  const one = { date: "2026-10-02", ready: [DIGEST.ready[0]], waiting_on_you: [], send: true };
+  assert.equal(buildEmail(one, ENV).subject, "1 PR ready to send");
+  assert.equal(buildEmail({ ...one, ready: [one.ready[0], one.ready[0]] }, ENV).subject, "2 PRs ready to send");
+  assert.equal(buildEmail({ ...one, ready: [{ ...one.ready[0], kind: "repro" }] }, ENV).subject, "1 item ready to send");
+  assert.equal(buildEmail({ ...one, ready: [], waiting_on_you: [w("a/b#1")] }, ENV).subject, "A maintainer replied");
+  assert.equal(buildEmail({ ...one, ready: [], waiting_on_you: [w("a/b#1"), w("c/d#2")] }, ENV).subject, "Maintainers replied on 2 PRs");
+  assert.equal(buildEmail({ ...one, ready: [], token_warning: true }, ENV).subject, "GitHub key needs replacing");
+  assert.equal(buildEmail({ ...one, ready: [] }, ENV).subject, "Nothing needs you today");
+  assert.equal(buildEmail({ ...one, stuck: [STUCK] }, ENV).subject, "Couldn't send 1 PR: refresh by Oct 12 · 1 PR ready to send");
+  const two = { ...one, ready: [], stuck: [STUCK, { ...STUCK, key: "a/b#2", slug: "a__b__2", refresh_by: "2026-10-09" }] };
+  assert.equal(buildEmail(two, ENV).subject, "Couldn't send 2 PRs: refresh by Oct 9");
+  assert.equal(buildEmail({ ...one, ready: [], stuck: [{ ...STUCK, refresh_by: "garbage" }] }, ENV).subject, "Couldn't send 1 PR");
+});
+
+test("a failed send leads the email: the plain failure, why, and the refresh-by date", () => {
+  const m = buildEmail({ ...DIGEST, stuck: [STUCK] }, ENV);
+  assert.match(m.html, /Couldn(?:'|&#39;)t send: fusioncore changed ci\.yml on Oct 5, after this draft was written\./);
+  assert.match(m.html, /Why: The project edited ci\.yml, so the saved change no longer fits\./);
+  assert.match(m.html, /Refresh by Oct 12/);
+  assert.match(m.html, /Tap Refresh &amp; send by Oct 12/);
+  assert.match(m.html, /Open and refresh/);
+  assert.match(m.html, /Add &lt;tests&gt; for the converter/); // escaped
+  assert.match(m.text, /COULDN'T SEND\n\nAdd <tests> for the converter\nmanankharwar\/fusioncore#161\nCouldn't send: fusioncore changed ci\.yml on Oct 5, after this draft was written\.\nWhy: The project edited ci\.yml, so the saved change no longer fits\.\nRefresh by Oct 12\n/);
+});
+
+test("a refresh already running is said so, and nothing stuck means no stuck section", () => {
   const running = buildEmail({ ...DIGEST, stuck: [{ ...STUCK, refreshing: true }] }, ENV);
   assert.match(running.html, /Refreshing now\./);
   assert.doesNotMatch(running.html, /Refresh by/);
-  const two = buildEmail({ ...DIGEST, stuck: [STUCK, { ...STUCK, key: "a/b#2", slug: "a__b__2", refresh_by: null }] }, ENV);
-  assert.match(two.subject, /^2 couldn't send · /);
+  assert.doesNotMatch(running.html, /Open and refresh/);
   for (const d of [DIGEST, { ...DIGEST, stuck: [] }]) {
     const none = buildEmail(d, ENV);
-    assert.doesNotMatch(none.html, /Couldn't send/);
+    assert.doesNotMatch(none.html, /Couldn(?:'|&#39;)t send/);
     assert.doesNotMatch(none.text, /Couldn't send/);
-    assert.doesNotMatch(none.subject, /send/);
+    assert.doesNotMatch(none.subject, /send:|Couldn/);
   }
-  const only = { date: "2026-10-02", stuck: [STUCK], send: true };
-  assert.equal(buildEmail(only, ENV).subject, "Couldn't send manankharwar/fusioncore#161");
-  assert.equal(buildEmail({ ...only, stuck: [{ ...STUCK, refresh_by: "garbage" }] }, ENV).html.includes("Refresh by"), false);
 });
 
-test("the pairing queue shows in the body only, and only when it is not empty", () => {
-  const withQueue = { ...DIGEST, pairing: [{ key: "o/r#5", title: "t", slug: "o__r__5" }, { key: "o/r#6", title: "t", slug: "o__r__6" }] };
+test("laptop briefings and the pairing queue are not in the daily email", () => {
+  const withQueue = {
+    ...DIGEST,
+    new_briefings: [{ key: "o/r#4", title: "Brand new briefing", kind: "pr", slug: "o__r__4" }],
+    pairing: [{ key: "o/r#5", title: "Pairing item", slug: "o__r__5" }],
+    weekly: [{ key: "o/r#6", title: "Weekly item", slug: "o__r__6", ...LINES }],
+  };
   const m = buildEmail(withQueue, ENV);
-  assert.match(m.html, /Pairing queue: 2/);
-  assert.match(m.text, /Pairing queue: 2/);
-  assert.doesNotMatch(m.subject, /pairing/i);
-  for (const d of [DIGEST, { ...DIGEST, pairing: [] }]) {
-    const none = buildEmail(d, ENV);
-    assert.doesNotMatch(none.html, /Pairing/);
-    assert.doesNotMatch(none.text, /Pairing/);
+  for (const gone of ["Brand new briefing", "Pairing", "Weekly item", "o__r__4", "o__r__5", "o__r__6"]) {
+    assert.ok(!m.html.includes(gone) && !m.text.includes(gone), gone);
   }
+  assert.doesNotMatch(m.subject, /new|pairing/i);
+});
+
+const WEEKLY = {
+  date: "2026-10-10",
+  weekly: [
+    { key: "duckdb/duckdb#26144", slug: "duckdb__duckdb__26144", title: "PREPARE with nextval() <crashes>", kind: "pr",
+      problem: "Preparing a query that uses a sequence breaks the whole database session until it is restarted.",
+      sending: "Nothing prepared yet: a laptop session where we write it together",
+      your_part: "Laptop: run /contribute, about 2 hours including the build" },
+  ],
+};
+
+test("the Saturday email lists laptop briefings with the three lines and one button each", () => {
+  const m = buildWeeklyEmail(WEEKLY, ENV);
+  assert.equal(m.subject, "Worth doing on your laptop this week");
+  assert.match(m.html, /PREPARE with nextval\(\) &lt;crashes&gt;/);
+  assert.match(m.html, /breaks the whole database session/);
+  assert.match(m.html, /Nothing prepared yet: a laptop session where we write it together/);
+  assert.match(m.html, /Laptop: run \/contribute, about 2 hours including the build/);
+  assert.equal(m.html.split('href="https://me.aadityad.dev/#duckdb__duckdb__26144"').length - 1, 1);
+  assert.match(m.html, /Open the briefing/);
+  for (const needle of ["PREPARE with nextval() <crashes>", "What's broken: Preparing a query", "You'd send: Nothing prepared yet", "Your part: Laptop: run /contribute", "https://me.aadityad.dev/#duckdb__duckdb__26144"]) {
+    assert.ok(m.text.includes(needle), needle);
+  }
+});
+
+test("the Saturday email shows at most five and says how many more", () => {
+  const many = { ...WEEKLY, weekly: Array.from({ length: 7 }, (_, n) => ({ ...WEEKLY.weekly[0], key: `o/r#${n}`, slug: `o__r__${n}`, title: `Item ${n}` })) };
+  const m = buildWeeklyEmail(many, ENV);
+  assert.equal(m.html.match(/Open the briefing/g).length, 5);
+  assert.match(m.html, /And 2 more on the dashboard/);
+  assert.match(m.text, /And 2 more on the dashboard/);
+});
+
+test("the Saturday email is sent only when there is something and the digest is from today", async () => {
+  const saturday = Date.parse("2026-10-10T15:10:00Z");
+  const sent = await sendWeekly(ENV, { fetchFn: fetchMock({ "https://api.github.com/": Response.json(WEEKLY), "https://api.resend.com/": Response.json({}) }), now: saturday });
+  assert.deepEqual(sent, { sent: true, subject: "Worth doing on your laptop this week" });
+  for (const [digest, now] of [[{ ...WEEKLY, weekly: [] }, saturday], [{ date: "2026-10-10" }, saturday], [WEEKLY, Date.parse("2026-10-11T15:10:00Z")]]) {
+    calls = [];
+    const out = await sendWeekly(ENV, { fetchFn: fetchMock({ "https://api.github.com/": Response.json(digest) }), now });
+    assert.equal(out.sent, false);
+    assert.equal(calls.some((c) => c.url.includes("resend")), false);
+  }
+  assert.equal((await sendWeekly(ENV, { fetchFn: fetchMock({ "https://api.github.com/": new Response("", { status: 404 }) }), now: saturday })).sent, false);
 });
 
 test("sends when send is true and the date is today", async () => {
@@ -412,7 +494,7 @@ test("sends when send is true and the date is today", async () => {
   const sent = JSON.parse(resend.init.body);
   assert.equal(sent.from, "OSS Scout <scout@aadityad.dev>");
   assert.deepEqual(sent.to, [ENV.OWNER_EMAIL]);
-  assert.match(sent.subject, /1 ready/);
+  assert.match(sent.subject, /1 PR ready to send/);
   assert.equal(calls[0].url, "https://api.github.com/repos/aadityad12/oss-scout-data/contents/digest.json?ref=claude%2Fscout-data");
 });
 
@@ -449,14 +531,15 @@ test("routes each cron to its job, and unknown ones to nothing", () => {
   assert.equal(route("0 15 * * *"), "digest");
   assert.equal(route("0 */3 * * *"), "track");
   assert.equal(route("30 */3 * * *"), "alerts");
-  for (const cron of ["", undefined, "0 0 * * *", "30 15 * * *"]) assert.equal(route(cron), null);
+  assert.equal(route("10 15 * * SAT"), "weekly");
+  for (const cron of ["", undefined, "0 0 * * *", "30 15 * * *", "10 15 * * *", "10 15 * * 6"]) assert.equal(route(cron), null);
 });
 
 test("wrangler.toml lists exactly the crons the Worker routes", async () => {
   const { readFileSync } = await import("node:fs");
   const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
   const crons = [...toml.match(/^crons = \[(.*)\]/m)[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(crons, ["0 15 * * *", "0 */3 * * *", "30 */3 * * *"]);
+  assert.deepEqual(crons, ["0 15 * * *", "0 */3 * * *", "30 */3 * * *", "10 15 * * SAT"]);
   for (const cron of crons) assert.notEqual(route(cron), null);
 });
 
