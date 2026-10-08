@@ -1,5 +1,6 @@
 {
   "manankharwar/fusioncore#161": {
+    "headline": "Add tests to the robot-config converter and stop it crashing on empty files",
     "plain_problem": "A script that converts robot configs into FusionCore configs has no tests, and it crashes with a confusing error on empty files.",
     "files_explained": [
       ".github/workflows/ci.yml: runs the new tests automatically on every change, next to the project's other checks",
@@ -8,6 +9,7 @@
     ]
   },
   "duckdb/duckdb#26144": {
+    "headline": "Stop a prepared query that uses a sequence from breaking the whole session",
     "plain_problem": "Asking DuckDB to prepare a query that takes a number from a sequence breaks the whole session, and every later query fails until you restart it."
   }
 }

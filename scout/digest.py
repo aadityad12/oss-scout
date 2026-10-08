@@ -46,8 +46,9 @@ STUCK_STATUSES = ("ready", "approved", "waiting_on_you", "pr_open")
 
 
 def lines_of(s: dict, b: dict | None, now: datetime) -> dict:
-    """The three plain lines (problem, sending, your_part) for a suggestion and its briefing."""
-    return plain.lines({**s, "refresh_pending": refresh.pending(s, now)}, b or {})
+    """The three plain lines (problem, sending, your_part) and the `headline` for a suggestion and its briefing."""
+    return {"headline": plain.headline(s, b or {}),
+            **plain.lines({**s, "refresh_pending": refresh.pending(s, now)}, b or {})}
 
 
 def stuck(st: dict, now: datetime, bs: dict | None = None) -> list[dict]:

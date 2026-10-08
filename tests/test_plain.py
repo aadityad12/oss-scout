@@ -182,3 +182,36 @@ def test_waiting_items_say_what_the_reply_is_about(tmp_path):
     [w] = digest.build(config.load(), tmp_path, {"suggestions": sugg, "contributions": {"prs": prs}}, NOW)["waiting_on_you"]
     assert w["problem"] == "A maintainer replied on your pull request: Fix the crash" and w["title"] == "Fix the crash"
     assert "Push fix & reply" in w["your_part"]
+
+
+# -- the heading ---------------------------------------------------------------
+
+def test_headline_is_optional_and_checked():
+    assert briefings.validate(b(headline="Add tests to the converter")) == []
+    assert briefings.validate(b(headline=" ")) == ["headline should be a non-empty string"]
+    assert briefings.validate(b(headline=3)) == ["headline should be a non-empty string"]
+
+
+def test_headline_falls_back_from_the_briefing_to_the_pr_title_to_the_issue_title():
+    item = {"title": "`rl_to_fusioncore.py` is the first code most migrators run, and it has no test"}
+    draft = b(mode="draft", kind="pr", _pr={"title": "Add tests for the converter"})
+    assert plain.headline(item, {**draft, "headline": "  Add tests to the robot-config converter "}) == "Add tests to the robot-config converter"
+    assert plain.headline(item, draft) == "Add tests for the converter"
+    assert plain.headline(item, b(mode="draft")) == "is the first code most migrators run, and it has no test"
+    # a pair briefing or a comment has no PR title to borrow
+    assert plain.headline(item, b(mode="pair", _pr={"title": "ignored"})).startswith("is the first code")
+    assert plain.headline(item, b(mode="draft", kind="repro", _pr={"title": "ignored"})).startswith("is the first code")
+    assert plain.headline({"title": "Crash in `nextval()` when preparing"}, {}) == "Crash in when preparing"
+    assert plain.headline({"title": "`only_code`"}, {}) == "only_code"
+
+
+def test_digest_items_carry_the_headline(tmp_path):
+    put(tmp_path, "o/r#1", {"ready": True, "headline": "Add tests to the converter"}, PATCH)
+    put(tmp_path, "o/r#2", {"mode": "pair"})
+    sugg = {
+        "o/r#1": {"status": "ready", "title": "`conv.py` has no test", "suggested_at": "2026-10-09T00:00:00+00:00"},
+        "o/r#2": {"status": "suggested", "title": "Crash in `nextval()`", "suggested_at": "2026-10-08T00:00:00+00:00"},
+    }
+    d = digest.build(config.load(), tmp_path, {"suggestions": sugg, "contributions": {"prs": []}}, NOW)
+    assert d["ready"][0]["headline"] == "Add tests to the converter" and d["ready"][0]["title"] == "`conv.py` has no test"
+    assert d["weekly"][0]["headline"] == "Crash in"

@@ -904,7 +904,8 @@ def test_the_digest_lists_stuck_items(env):
     assert d["stuck"] == [{"key": KEY, "slug": "o__r__7", "title": "Crash on empty input",
                            "plain": "Couldn't send: r changed ci.yml on Oct 5, after this draft was written.",
                            "why": "The project edited ci.yml.", "fix_action": "refresh", "refresh_by": "2026-10-12",
-                           "refreshing": False, "problem": "Crash on empty input", "sending": "A pull request",
+                           "refreshing": False, "headline": "Fix crash on empty input",  # the draft PR's title
+                           "problem": "Crash on empty input", "sending": "A pull request",
                            "your_part": "Tap Refresh & send by Oct 12"}]
     assert d["send"] is True
     st["suggestions"][KEY]["refresh_requested_at"] = "2026-10-07T11:00:00+00:00"

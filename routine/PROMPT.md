@@ -183,6 +183,7 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
      "comment_facts": ["pair/own only, optional: bullet facts for the claim comment"],
      "post_target": "URL of the issue or PR to comment on (ready repro/triage/review only)",
      "models_used": [{"model": "sonnet", "did": "triage, draft, briefing"}, {"model": "opus", "did": "root cause"}],
+     "headline": "A short plain name for this item, at most about 70 characters, no file or function names: it is the bold heading in the email and on the card. E.g. 'Add tests to the robot-config converter and stop it crashing on empty files'. Optional.",
      "plain_problem": "ONE sentence, no file names, function names or code, for someone who doesn't know the project: what is broken and who it hurts. E.g. 'A script that converts robot configs into FusionCore configs has no tests, and it crashes with a confusing error on empty files.'",
      "summary": "The issue in 2-4 plain-English sentences.",
      "why": "Why this issue, for this person, now. Mention the repo's merge stats.",

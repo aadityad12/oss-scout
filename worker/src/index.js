@@ -249,13 +249,15 @@ const lineRows = (i) =>
     .map(([k, label]) => `<div style="margin:8px 0 0"><div style="font-size:12px;color:${MUTED};text-transform:uppercase;letter-spacing:.04em">${label}</div><div>${esc(i[k])}</div></div>`)
     .join("");
 const lineText = (i) => LINES.filter(([k]) => i[k]).map(([k, label]) => `${label}: ${i[k]}`);
-const head = (i) => (i.title && i.title !== i.key ? [i.title, i.key] : [i.key]);
+// the bold heading: a short plain name (`headline`), else the title; the key stays as the small grey line under it
+const heading = (i) => i.headline || i.title || i.key;
+const head = (i) => (heading(i) !== i.key ? [heading(i), i.key] : [i.key]);
 const itemButton = (env, i, label) =>
   `<p style="margin:14px 0 0"><a href="${esc(deepLink(env, i.slug))}" style="display:inline-block;background:${BLUE};color:#fff;text-decoration:none;font-weight:600;font-size:16px;padding:12px 22px;border-radius:10px">${esc(label)}</a></p>`;
 
 // One item: bold title, its key, anything specific to the section (`extra`), the three lines, one button.
 const itemCard = (env, i, label, extra = "") =>
-  `<div style="margin:0 0 22px;padding:0 0 22px;border-bottom:1px solid ${LINE}"><div style="font-size:17px;font-weight:700">${esc(i.title || i.key)}</div>${i.title && i.title !== i.key ? `<div style="font-size:13px;color:${MUTED}">${esc(i.key)}</div>` : ""}${extra}${lineRows(i)}${itemButton(env, i, label)}</div>`;
+  `<div style="margin:0 0 22px;padding:0 0 22px;border-bottom:1px solid ${LINE}"><div style="font-size:17px;font-weight:700">${esc(heading(i))}</div>${heading(i) !== i.key ? `<div style="font-size:13px;color:${MUTED}">${esc(i.key)}</div>` : ""}${extra}${lineRows(i)}${itemButton(env, i, label)}</div>`;
 const note = (text, color = INK) => (text ? `<div style="margin:10px 0 0;color:${color};font-weight:600">${esc(text)}</div>` : "");
 
 const refreshNote = (i) => (i.refreshing ? "Refreshing now." : shortDate(i.refresh_by) ? `Refresh by ${shortDate(i.refresh_by)}` : "");

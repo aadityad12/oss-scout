@@ -317,7 +317,7 @@ def test_digest_lists_ready_waiting_and_new(tmp_path):
                                                      contributions={"prs": prs}), NOW)
     assert d["send"] is True
     assert [(i["key"], i["title"], i["kind"], i["slug"]) for i in d["ready"]] == [("o/r#1", "A", "repro", "o__r__1")]
-    assert {"problem", "sending", "your_part"} <= set(d["ready"][0]) <= {"key", "title", "kind", "slug", "problem", "sending", "your_part"}
+    assert {"problem", "sending", "your_part"} <= set(d["ready"][0]) <= {"key", "title", "kind", "slug", "headline", "problem", "sending", "your_part"}
     assert d["new_briefings"] == [{"key": "o/r#2", "title": "B", "kind": "pr", "slug": "o__r__2"},
                                   {"key": "o/r#3", "title": "C", "kind": "pr", "slug": "o__r__3"}]
     assert [{k: w[k] for k in ("key", "slug", "pr_url", "since", "overdue")} for w in d["waiting_on_you"]] == [

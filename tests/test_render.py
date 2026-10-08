@@ -398,3 +398,12 @@ def test_dashboard_renders_with_no_data(tmp_path):
     assert [g["items"] for g in p["inbox"]] == [[], [], [], [], []] and p["to_do"] == 0 and p["in_flight"] == []
     assert p["digest"] == {} and p["note"] == ""
     assert embedded(render.render(config.load(), tmp_path, statemod.load(tmp_path)).read_text())["to_do"] == 0
+
+
+def test_inbox_items_carry_a_headline_apart_from_the_lines(tmp_path):
+    _, _, p = payload_of(tmp_path)
+    for gr in p["inbox"]:
+        for i in gr["items"]:
+            if gr["id"] != "waiting":
+                assert i["headline"] and "headline" not in i["lines"], i["key"]
+    assert p["inbox"][1]["items"][0]["headline"] == "Fix it"  # a draft PR borrows pr.json's title

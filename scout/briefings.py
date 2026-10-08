@@ -113,6 +113,8 @@ def _plain_problems(b: dict) -> list[str]:
     problems = []
     if "plain_problem" in b and not (isinstance(b["plain_problem"], str) and b["plain_problem"].strip()):
         problems.append("plain_problem should be a non-empty string")
+    if "headline" in b and not (isinstance(b["headline"], str) and b["headline"].strip()):
+        problems.append("headline should be a non-empty string")
     fe = b.get("files_explained")
     if "files_explained" in b and not (isinstance(fe, list) and all(isinstance(x, str) and x.strip() for x in fe)):
         problems.append("files_explained should be a list of strings")

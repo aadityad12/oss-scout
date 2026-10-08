@@ -626,7 +626,7 @@ function rowParts(it, group) {
     const [label, cls] = FLIGHT[it.status] || [it.status, ""];
     return { ref: `${it.repo}#${it.number}`, title: it.title, late: false, sub: "", chips: `<span class="st ${cls}">${esc(label)}</span>`, age: short(it.updated_at || it.created_at) };
   }
-  const title = b.title || it.title;
+  const title = it.headline || b.headline || b.title || it.title;
   let chips = "";
   if (group === "ready" || (group === "snoozed" && ["ready", "approved"].includes(it.status))) {
     chips = `<span class="kind">${esc(KIND[it.kind || "pr"] || "Comment")}</span><span class="tag">One tap</span>${it.status === "approved" ? `<span class="st on">Approved</span>` : ""}`;

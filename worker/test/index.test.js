@@ -461,6 +461,26 @@ test("the Saturday email lists laptop briefings with the three lines and one but
   }
 });
 
+test("the bold heading is the headline, with the key under it; the title is the fallback", () => {
+  const withHeadline = { key: "o/r#1", slug: "o__r__1", title: "`conv.py` has no test", headline: "Add tests to the converter", ...LINES };
+  const noHeadline = { key: "o/r#2", slug: "o__r__2", title: "Plain issue title", ...LINES };
+  const bare = { key: "o/r#3", slug: "o__r__3", ...LINES };
+  const heading = (html, text) => html.includes(`font-weight:700">${text}</div>`);
+  const daily = buildEmail({ ...DIGEST, ready: [withHeadline, noHeadline, bare], stuck: [{ ...STUCK, headline: "Add tests to the robot-config converter" }], waiting_on_you: [] }, ENV);
+  assert.ok(heading(daily.html, "Add tests to the converter"));
+  assert.ok(heading(daily.html, "Plain issue title"));
+  assert.ok(heading(daily.html, "o/r#3"));
+  assert.ok(heading(daily.html, "Add tests to the robot-config converter"));
+  assert.doesNotMatch(daily.html, /conv\.py|Add &lt;tests&gt;/); // the raw titles are not shown
+  assert.match(daily.html, /font-size:13px[^>]*>o\/r#1</); // the key is the small grey line
+  assert.ok(daily.text.includes("Add tests to the converter\no/r#1\n"));
+  assert.ok(!daily.text.includes("conv.py"));
+  const weekly = buildWeeklyEmail({ ...WEEKLY, weekly: [{ ...WEEKLY.weekly[0], headline: "Stop a prepared query breaking the session" }] }, ENV);
+  assert.ok(heading(weekly.html, "Stop a prepared query breaking the session"));
+  assert.doesNotMatch(weekly.html, /nextval/);
+  assert.ok(weekly.text.includes("Stop a prepared query breaking the session\nduckdb/duckdb#26144"));
+});
+
 test("the Saturday email shows at most five and says how many more", () => {
   const many = { ...WEEKLY, weekly: Array.from({ length: 7 }, (_, n) => ({ ...WEEKLY.weekly[0], key: `o/r#${n}`, slug: `o__r__${n}`, title: `Item ${n}` })) };
   const m = buildWeeklyEmail(many, ENV);

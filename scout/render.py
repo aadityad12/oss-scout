@@ -120,10 +120,11 @@ def build_payload(cfg: Config, data: Path, st: dict, now: datetime | None = None
 
     def item(key: str, s: dict, group: str) -> dict:
         b = all_b.get(key, {})
-        it = {**s, "key": key, "slug": briefings.slug(key), "group": group,
+        lines = digestmod.lines_of(s, b, now)
+        it = {**s, "key": key, "slug": briefings.slug(key), "group": group, "headline": lines.pop("headline"),
               "briefing": {k: v for k, v in b.items() if not k.startswith("_")},
               "refresh_pending": refresh.pending(s, now),  # a rebuild was asked for and has no answer yet
-              "lines": digestmod.lines_of(s, b, now)}
+              "lines": lines}
         if s.get("status") in UNSENT:  # only what the one-tap flow edits and sends
             it.update(patch=b.get("_patch", ""), pr=b.get("_pr", {}), post=b.get("_post", ""),
                       problems=b.get("_problems", []))

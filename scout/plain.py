@@ -4,6 +4,7 @@
   sending    what you'd send: the PR with its size, a comment, or nothing yet
   your_part  what you do and how long it takes
 
+`headline` is the bold heading above them (see `headline()`).
 `problem` is written by the routine (`plain_problem`); older briefings fall back to
 the first sentence of `summary` with the code words taken out. The other two are
 computed here from the diff, the kind, the mode and the failure record. No model.
@@ -65,6 +66,25 @@ def problem(b: dict) -> str:
         return own.strip()
     s = strip_code(first_sentence(b.get("summary", "")))
     return s if len(s) >= 20 else str(b.get("title") or s)
+
+
+def headline(item: dict, b: dict) -> str:
+    """The bold heading for an item: the routine's `headline`, else (for a draft PR) the PR title
+    from pr.json, else the issue title with its backticked identifiers taken out."""
+    own = (b or {}).get("headline")
+    if isinstance(own, str) and own.strip():
+        return own.strip()
+    b = b or {}
+    if briefings.mode_of(b) == "draft" and b.get("kind", "pr") == "pr":
+        pr = b.get("_pr")
+        t = pr.get("title") if isinstance(pr, dict) else None
+        if isinstance(t, str) and t.strip():
+            return t.strip()
+    raw = str(item.get("title") or b.get("title") or "")
+    t = re.sub(r"\(\s*\)", "", CODE_SPAN.sub("", raw))
+    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
+    t = re.sub(r"\s{2,}", " ", t).strip(" ,;:")
+    return t or raw.replace("`", "").strip()
 
 
 # -- what you'd send ----------------------------------------------------------------
