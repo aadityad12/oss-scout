@@ -6,7 +6,7 @@ import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from . import briefings
+from . import briefings, refresh
 from .config import Config
 from .score import parse_ts
 from .wip import snoozed
@@ -41,6 +41,22 @@ def waiting_on_you(st: dict, now: datetime) -> list[dict]:
     return out
 
 
+STUCK_STATUSES = ("ready", "approved", "waiting_on_you", "pr_open")
+
+
+def stuck(st: dict, now: datetime) -> list[dict]:
+    """Items whose last send failed, in plain words. A snoozed item is left out."""
+    out = []
+    for key, s in sorted(st.get("suggestions", {}).items()):
+        f = s.get("failure")
+        if not isinstance(f, dict) or s.get("status") not in STUCK_STATUSES or snoozed(s, now):
+            continue
+        out.append({"key": key, "slug": briefings.slug(key), "title": s.get("title", ""), "plain": f.get("plain", ""),
+                    "why": f.get("why", ""), "fix_action": f.get("fix_action", "none"),
+                    "refresh_by": f.get("refresh_by"), "refreshing": refresh.pending(s, now)})
+    return out
+
+
 def build(cfg: Config, data: Path, st: dict, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     today = now.date().isoformat()
@@ -58,8 +74,10 @@ def build(cfg: Config, data: Path, st: dict, now: datetime | None = None) -> dic
     waiting = waiting_on_you(st, now)
     age = token_age_days(cfg, now.date())
     warn = age is not None and age > TOKEN_WARN_DAYS
+    stuck_items = stuck(st, now)
     return {
         "date": today,
+        "stuck": stuck_items,
         "ready": [item(k) for k in ready],
         "waiting_on_you": waiting,
         "new_briefings": [item(k) for k in fresh],
@@ -68,5 +86,5 @@ def build(cfg: Config, data: Path, st: dict, now: datetime | None = None) -> dic
                     and sugg[k].get("status") in ("suggested", "claimed", "ready", "approved")],
         "token_age_days": age,
         "token_warning": warn,
-        "send": bool(ready or waiting or fresh or warn),  # an expiring token breaks submits
+        "send": bool(stuck_items or ready or waiting or fresh or warn),  # an expiring token breaks submits
     }

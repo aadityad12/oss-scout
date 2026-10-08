@@ -212,6 +212,9 @@ def load_all(data: Path) -> list[dict]:
     return out
 
 
+DEMOTED_REFRESH = "The updated draft didn't work out, so this is a briefing for your laptop now."
+
+
 def ingest(data: Path, state: dict) -> int:
     added = 0
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -225,10 +228,19 @@ def ingest(data: Path, state: dict) -> int:
             fu = b["_followup"]
             if fu and not fu["problems"]:
                 s["followup"], s["followup_kind"] = fu["dir"], fu["kind"]
-            if status == "ready" and s["status"] == "suggested":
+            if b.get("ready") is False and s["status"] in ("ready", "approved"):
+                # the routine gave up on a refresh and made this a plain briefing
+                s.setdefault("history", []).append({"at": now, "from": s["status"], "to": "suggested"})
+                s.update(status="suggested", demoted_reason=DEMOTED_REFRESH)
+                s.pop("send_after_refresh", None)
+            # a demoted item stays a briefing until the owner asks for it to be prepared again
+            elif status == "ready" and s["status"] == "suggested" and (
+                    s.get("prepare_requested_at") or not s.get("demoted_reason")):
                 s.update(status="ready", kind=b.get("kind", "pr"))
                 s.setdefault("history", []).append({"at": now, "from": "suggested", "to": "ready"})
-                s.pop("prepare_requested_at", None)
+                for k in ("prepare_requested_at", "demoted_reason", "failure", "last_error", "send_after_refresh",
+                          "refresh_requested_at", "refresh_result", "refresh_attempts"):
+                    s.pop(k, None)
                 if b.get("post_target"):
                     s["post_target"] = b["post_target"]
             continue

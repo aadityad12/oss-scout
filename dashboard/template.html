@@ -153,6 +153,7 @@ details.snoozed .rows { display: grid; gap: 10px; margin-top: 10px; }
   .read30 .lab { line-height: 1.9; }
 }
 .err { color: var(--alert); font-weight: 600; font-size: 15px; overflow-wrap: anywhere; background: var(--alert-soft); border: 1px solid var(--alert-line); border-radius: 10px; padding: 10px 14px; }
+.err .why { font-weight: 400; font-size: 14px; margin-top: 4px; }
 .note { font-size: 14px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
 .reason, .disclosure { margin: 0; padding: 12px 14px; border-radius: 10px; background: var(--well); font-size: 15px; overflow-wrap: anywhere; }
 .disclosure mark { background: var(--accent-soft); color: var(--ink); padding: 1px 4px; border-radius: 4px; font-weight: 600; }
@@ -445,9 +446,26 @@ function bar(defs) {
 
 /* ---------- detail views ---------- */
 
+const dayLabel = d => { const t = new Date(`${d}T12:00:00`); return isNaN(t) ? d : t.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
+
+/* A send that didn't go through: what happened, why, and when the draft goes stale. Red because it needs you. */
+function failureHtml(f) {
+  if (!f) return "";
+  return `<div class="err">${esc(f.plain)}${f.why ? `<div class="why">${esc(f.why)}</div>` : ""}${f.refresh_by ? `<div class="why">Refresh by ${esc(dayLabel(f.refresh_by))}, or it becomes a laptop briefing.</div>` : ""}</div>`;
+}
+
+/* What happened to a Refresh & send tap, in neutral words (nothing here is an error). */
+function refreshHtml(it) {
+  const r = it.refresh_result || {};
+  if (it.refresh_pending) return `<p class="reason"><b>Refreshing.</b> The draft is being rebuilt on the project's latest code. If the fix itself stays the same it goes out by itself; otherwise it comes back here for you to read.</p>`;
+  if (r.at && r.same_fix === false && it.status === "approved") return `<p class="reason"><b>The refreshed draft changes the fix itself.</b> ${esc(r.what_changed || "")} Read the change below, then tap Submit PR if you are happy with it.</p>`;
+  return "";
+}
+
 function problemsHtml(it) {
   return `${(it.problems || []).length ? `<div class="err">This item no longer validates and will be refused: ${esc(it.problems.join("; "))}</div>` : ""}
-    ${it.last_error ? `<div class="err">Last attempt failed: ${esc(it.last_error)}</div>` : ""}`;
+    ${it.failure ? failureHtml(it.failure) : it.last_error ? `<div class="err">Last attempt failed: ${esc(it.last_error)}</div>` : ""}
+    ${refreshHtml(it)}`;
 }
 
 function detailReady(it) {
@@ -466,6 +484,7 @@ function detailReady(it) {
       <p class="note">Goes on ${link(target, `${esc(target.replace("https://github.com/", ""))} ↗`)}</p>
       <label class="field">Comment<textarea name="body">\n${esc(it.post)}</textarea></label></section>`;
   const verb = isPr ? "Submit PR" : "Post comment";
+  const canRefresh = isPr && it.failure && it.failure.fix_action === "refresh" && !it.refresh_pending;
   return `<div class="detail" data-key="${esc(it.key)}" data-slug="${esc(it.slug)}" data-repo="${esc(it.repo)}" data-target="${esc(target)}">
     ${read30(it)}
     ${problemsHtml(it)}
@@ -473,7 +492,7 @@ function detailReady(it) {
     ${folds(b, false)}
     ${modelsLine(b)}
     ${it.pairing ? `<p class="note">In your pairing queue. <button class="linkbtn" type="button" data-act="unpair">Unpair</button></p>` : ""}
-    ${bar([[isPr ? "submit" : "post", verb, "primary"], ["later", "Later"], ["skip", "Skip", "danger"]])}
+    ${bar([...(canRefresh ? [["refresh", "Refresh &amp; send", "primary"]] : []), [isPr ? "submit" : "post", verb, canRefresh ? "" : "primary"], ["later", "Later"], ["skip", "Skip", "danger"]])}
   </div>`;
 }
 
@@ -493,6 +512,7 @@ function detailBriefing(it) {
   const pairBtn = it.pairing ? [["unpair", "Unpair", "wide"]] : [["pair", "Pair on laptop", defs.length ? "wide" : "primary"]];
   return `<div class="detail" data-key="${esc(it.key)}" data-slug="${esc(it.slug)}" data-repo="${esc(it.repo)}">
     ${read30(it)}
+    ${it.demoted_reason ? `<p class="reason">${esc(it.demoted_reason)}</p>` : ""}
     ${blocked}
     ${it.pairing ? `<section class="sec"><h4>On your laptop</h4><p class="note">Start a Claude Code session in the oss-scout repo and paste:</p>${copyBlock(`/contribute ${it.key}`)}</section>` : ""}
     ${folds(b, true)}
@@ -529,6 +549,7 @@ function detailWaiting(w) {
     </div>`;
   }
   return `<div class="detail" ${attrs}>${head}
+    ${failureHtml(w.failure)}
     <p class="reason">${f && f.done ? "Your reply went out. The next scan will confirm." : "A draft is on its way (usually within the hour)."} ${link(w.pr_url, "Open the PR to reply yourself ↗")}</p>
   </div>`;
 }
@@ -538,7 +559,7 @@ function detailFlight(r) {
   return `<div class="detail" data-slug="${esc(r.slug)}">
     <div class="facts">
       <div><b>${esc(label)}</b>${r.created_at ? ` · opened ${esc(ago(r.created_at))}` : ""}${r.updated_at ? ` · updated ${esc(ago(r.updated_at))}` : ""}</div>
-      ${r.last_error ? `<div class="err">Last attempt failed: ${esc(r.last_error)}</div>` : ""}
+      ${r.failure ? failureHtml(r.failure) : r.last_error ? `<div class="err">Last attempt failed: ${esc(r.last_error)}</div>` : ""}
     </div>
     ${(r.comments || []).length ? `<section class="sec"><h4>Latest from reviewers</h4>${commentsHtml(r.comments)}</section>` : ""}
     <div class="bar-btns"><a class="btn primary" href="${esc(safeUrl(r.url))}" target="_blank" rel="noopener">Open on GitHub ↗</a></div>
@@ -566,12 +587,14 @@ function rowParts(it, group) {
   let chips = "";
   if (group === "ready" || (group === "snoozed" && ["ready", "approved"].includes(it.status))) {
     chips = `<span class="kind">${esc(KIND[it.kind || "pr"] || "Comment")}</span><span class="tag">One tap</span>${it.status === "approved" ? `<span class="st on">Approved</span>` : ""}`;
+    if (it.refresh_pending) chips += `<span class="st on">Refreshing</span>`;
+    else if (it.failure) chips += `<span class="st attn">Couldn't send</span>`;
     if (it.pairing) chips += `<span class="tag">Pairing</span>`;
   } else {
     chips = `${MODE_LABEL[b.mode] ? `<span class="tag">${MODE_LABEL[b.mode]}</span>` : b.difficulty ? `<span class="tag">${esc(b.difficulty)}</span>` : ""}${it.pairing ? `<span class="tag">Pairing</span>` : ""}${it.prepare_requested_at ? `<span class="st on">Requested</span>` : ""}`;
   }
   if (group === "snoozed") chips += `<span class="tag">Back ${esc(inDays(it.snoozed_until))}</span>`;
-  return { ref: it.key, title, late: false, chips, age: short(it.suggested_at) };
+  return { ref: it.key, title, late: !!it.failure && !it.refresh_pending && group === "ready", chips, age: short(it.suggested_at) };
 }
 
 function rowHtml(it, group) {
@@ -804,6 +827,7 @@ const CONFIRM = {
   submit: c => `Open a PR on ${c.dataset.repo} as ${DATA.login}?`,
   post: c => `Post this comment on ${c.dataset.target.replace("https://github.com/", "")} as ${DATA.login}?`,
   followup: c => `Push the fix and post your reply on ${c.dataset.repo} as ${DATA.login}?`,
+  refresh: c => `Rebuild this change on ${c.dataset.repo}'s latest code and open the PR as ${DATA.login} if it still works? Edits to the text on this page are not used.`,
   skip: () => "Turn this one down? It won't be suggested again.",
 };
 

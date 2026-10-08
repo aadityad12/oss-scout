@@ -68,7 +68,7 @@ From the repo root, in a checkout of the data repo's `main` branch:
 SCOUT_DATA_DIR=/path/to/oss-scout-data python3 -m scout init-data
 ```
 
-Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also writes) to `main`. Then in the data repo, **Settings**, **Secrets and variables**, **Actions**, add `SUBMIT_TOKEN`: a classic token with only the `public_repo` scope.
+Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also writes) to `main`. Then in the data repo, **Settings**, **Secrets and variables**, **Actions**, add `SUBMIT_TOKEN`: a classic token with the `public_repo` scope, plus `workflow` if you want it to send changes under `.github/workflows/`. Also add `ROUTINE_FIRE_URL` and `ROUTINE_TOKEN` there (the same values as in the `oss-scout` repo's secrets): the **Refresh & send** button uses them to start the Claude routine for a single item when the automatic check can't tell it is the same fix. Without them it logs "Routine trigger not configured" and the rebuild waits for the next nightly run.
 
 ### 7. Check it
 
@@ -90,5 +90,5 @@ Commit and push `.github/workflows/act.yml` (with the `.claude/` files it also w
 
 - Every request needs a valid Cloudflare Access token for your email (checked again here, not just at the edge).
 - `GET /` serves `dashboard.html` from the data repo, `GET /api/runs` lists the last five `act.yml` runs.
-- `POST /api/act` needs `content-type: application/json` and an `Origin` of `https://me.aadityad.dev`. `action` must be one of `submit`, `post`, `followup`, `approve`, `later`, `skip`, `prepare`, `pair`, `unpair`, `feature`, `unfeature`, `summary`; `key` must look like `owner/repo#123`; the title is at most 256 characters and the text at most 60000 (GitHub caps workflow inputs at 65,535 characters in total, so in practice about 45,000). `prepare`, `pair`, `unpair`, `feature` and `unfeature` ignore the title and text. `summary` takes the impact line as the text: required, at most 200 characters, one line; an empty string removes it.
+- `POST /api/act` needs `content-type: application/json` and an `Origin` of `https://me.aadityad.dev`. `action` must be one of `submit`, `post`, `followup`, `approve`, `later`, `skip`, `prepare`, `pair`, `unpair`, `feature`, `unfeature`, `summary`, `refresh`; `key` must look like `owner/repo#123`; the title is at most 256 characters and the text at most 60000 (GitHub caps workflow inputs at 65,535 characters in total, so in practice about 45,000). `prepare`, `pair`, `unpair`, `feature`, `unfeature` and `refresh` ignore the title and text. `summary` takes the impact line as the text: required, at most 200 characters, one line; an empty string removes it.
 - It never writes to GitHub itself. It only starts the workflow.

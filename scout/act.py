@@ -16,8 +16,11 @@ failure. Nothing here runs unless the owner pressed the button.
   pair      mark an item to work on together in a /contribute session (unpair undoes it)
   feature   show a merged PR first on the public page (unfeature undoes it)
   summary   set the one-line summary of a PR on the public page (empty text removes it)
+  refresh   mark an approved item to be rebuilt on the project's current code, then sent
+            (the act workflow's check and send jobs do the rebuild; see refresh.py)
 
-None of the last four touch GitHub.
+The last five don't touch GitHub. A failed submit, post or follow-up stores a
+plain-language `failure` on the item (see failures.py).
 """
 
 from __future__ import annotations
@@ -34,16 +37,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import briefings, ghwrite, state as statemod, wip
+from . import briefings, failures, ghwrite, refresh as refreshmod, state as statemod, track, wip
 from .config import Config
 from .github import GitHub, NotFound
 from .score import parse_ts
 
 ACTIONS = ("submit", "post", "followup", "approve", "later", "skip",
-           "prepare", "pair", "unpair", "feature", "unfeature", "summary")
+           "prepare", "pair", "unpair", "feature", "unfeature", "summary", "refresh")
 KEY = re.compile(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)$")
 TARGET = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(issues|pull)/([0-9]+)$")
-REF = re.compile(r"^[A-Za-z0-9._/-]+$")
 MAX_TITLE, MAX_BODY, SNOOZE_DAYS, KEEP_ACTIONS = 256, 60000, 3, 200
 MAX_FEATURED, MAX_SUMMARY = 3, 200
 STUCK_MINUTES = 30  # a "submitting" item older than this is a job that died; retrying is safe
@@ -53,6 +55,18 @@ FOLLOWUP_MESSAGE = "Address review feedback"
 
 class ActError(Exception):
     pass
+
+
+class Failure(ActError):
+    """A refusal the owner should be told about in plain words (see failures.py)."""
+
+    def __init__(self, code: str, plain: str, why: str = "", message: str | None = None):
+        super().__init__(message or why or plain)
+        self.code, self.plain, self.why = code, plain, why
+
+
+class PatchError(ActError):
+    """git could not apply a patch to the current code."""
 
 
 def fail(msg: str):
@@ -150,25 +164,111 @@ class Job:
             fail("the briefing's repo does not match the suggestion")
         return b
 
+    # -- failure records --
+
+    def draft_patch(self) -> str:
+        try:
+            return (self.folder / "draft.patch").read_text()
+        except OSError:
+            return ""
+
+    def base_branch(self) -> str | None:
+        base = briefings.read_json(self.folder / "pr.json").get("base")
+        return base if isinstance(base, str) and failures.sane_ref(base) else None
+
+    def failure(self, exc: Exception, patch: str = "", followup: bool = False) -> dict:
+        """The plain-language record for `exc`: what happened, why, what to do, and when the draft goes stale."""
+        code, plain, why, fix = self.explain(exc, patch, followup)
+        # followups push to the PR's own branch, so "how fast does upstream move" doesn't apply
+        commits = None if followup else failures.recent_commit_count(
+            read, self.repo, self.base_branch(), failures.patch_files(patch), self.now)
+        rec = failures.record(code, plain, mask(why)[:400], self.now.date(), commits, self.stamp, fix)
+        if followup:
+            rec["refresh_by"] = None
+        return rec
+
+    def explain(self, exc: Exception, patch: str, followup: bool) -> tuple[str, str, str, str | None]:
+        if isinstance(exc, Failure):
+            return exc.code, exc.plain, exc.why or str(exc), None
+        msg = mask(str(exc))
+        low = msg.lower()
+        if isinstance(exc, PatchError):
+            files = failures.patch_files(patch)
+            files = [f for f in files if f in msg] or files
+            if followup:
+                return ("upstream_moved", "Couldn't send: the pull request's branch changed after this fix was written.",
+                        "The saved fix no longer fits the branch. Ask for a new draft or push it yourself.", "none")
+            touch = failures.latest_touch(read, self.repo, self.base_branch(), files) if files else None
+            name = self.repo.split("/")[1]
+            if touch:
+                when = failures.day(touch[1])
+                return ("upstream_moved",
+                        f"Couldn't send: {name} changed {failures.names(files)} on {when}, after this draft was written.",
+                        f"The project edited {failures.names(files)} on {when}, so the saved change no longer fits. "
+                        "Refresh rebuilds it on their latest code.", None)
+            return ("upstream_moved", f"Couldn't send: {name} changed after this draft was written.",
+                    "The saved change no longer fits the project's latest code. Refresh rebuilds it.", None)
+        if "401" in msg or "bad credentials" in low or "authentication failed" in low or "invalid username" in low:
+            return ("token_expired", "Your GitHub key has expired or was turned down.",
+                    "GitHub rejected the key. Make a new one and replace SUBMIT_TOKEN in the data repo's secrets.", None)
+        if "workflow" in low and ("scope" in low or "refusing to allow" in low):
+            return ("token_scope", "Your GitHub key is missing the 'workflow' permission this change needs.",
+                    "The change edits a file under .github/workflows, which needs the key's 'workflow' permission.", None)
+        return "github_error", "Couldn't send: GitHub returned an error.", msg[:300], None
+
+    def problem(self, s: dict, exc: Exception, patch: str = "", followup: bool = False) -> None:
+        """Store a runtime failure on the item: the masked error and the plain record."""
+        s["last_error"] = mask(str(exc))[:500]
+        s["failure"] = self.failure(exc, patch, followup)
+
+    @staticmethod
+    def clear_problem(s: dict) -> None:
+        for k in ("last_error", "submitting_at", "failure", "send_after_refresh"):
+            s.pop(k, None)
+
 
 # -- checks -------------------------------------------------------------------
 
-def sane_ref(name: str) -> bool:
-    return bool(REF.match(name)) and not (name[0] in "-/." or name[-1] in "/." or ".." in name
-                                          or "//" in name or name.endswith(".lock"))
+sane_ref = failures.sane_ref
 
 
 def check_text(title: str | None, body: str | None, disclosure: str | None = None) -> None:
+    def rejected(why: str):
+        raise Failure("text_rejected", "Couldn't send: the edited text was turned down.", why[0].upper() + why[1:])
     if title is not None:
         if not title.strip() or "\n" in title or len(title) > MAX_TITLE:
-            fail(f"the title must be one line, 1-{MAX_TITLE} characters")
+            rejected(f"the title must be one line, 1-{MAX_TITLE} characters")
     if body is not None:
         if not body.strip() or len(body) > MAX_BODY:
-            fail(f"the text must be 1-{MAX_BODY} characters")
+            rejected(f"the text must be 1-{MAX_BODY} characters")
         if disclosure and disclosure not in body:
-            fail("the text must keep the AI-disclosure sentence this project requires")
+            rejected("the text must keep the AI-disclosure sentence this project requires")
     if briefings.has_ai_marker(title or "", body or ""):
-        fail("the text contains an AI marker")
+        rejected("the text contains an AI marker")
+
+
+def check_token(patch: str) -> None:
+    """Before cloning anything: is the key alive, and does it have the permission this patch needs?"""
+    status, scopes = ghwrite.token_scopes()
+    if status == 401:
+        raise Failure("token_expired", "Your GitHub key has expired or was turned down.",
+                      "GitHub rejected the key. Make a new one and replace SUBMIT_TOKEN in the data repo's secrets.")
+    if scopes is not None and failures.touches_workflows(patch) and "workflow" not in scopes:
+        raise Failure("token_scope", "Your GitHub key is missing the 'workflow' permission this change needs.",
+                      "The change edits a file under .github/workflows, which needs the key's 'workflow' permission.")
+
+
+def check_taken(job: Job) -> None:
+    """Refuse when the issue was closed or someone else already has a pull request open for it."""
+    try:
+        issue = read(f"repos/{job.repo}/issues/{job.number}")
+        other = None if issue.get("state") == "closed" else track.competing_pr(read, job.repo, job.number, job.cfg.login)
+    except Exception:
+        return  # a read that failed must not block a send the owner approved
+    if issue.get("state") == "closed":
+        raise Failure("taken", "Couldn't send: this issue was closed.", "The project closed the issue, so there is nothing left to fix.")
+    if other:
+        raise Failure("taken", "Couldn't send: someone else already opened a pull request for this issue.", f"See {other}.")
 
 
 def ready_item(job: Job, kinds: tuple[str, ...]) -> tuple[dict, dict]:
@@ -186,7 +286,10 @@ def ready_item(job: Job, kinds: tuple[str, ...]) -> tuple[dict, dict]:
     if b.get("ai_posts_forbidden"):
         fail("this project forbids AI-written posts")
     if problems := briefings.validate(b, job.folder):
-        fail("the briefing no longer validates: " + "; ".join(problems))
+        text = "the briefing no longer validates: " + "; ".join(problems)
+        if any(re.search(r"needs (pr\.json|draft\.patch|post\.md)", p) for p in problems):
+            raise Failure("missing_files", "Couldn't send: a file the draft needs is missing.", text[0].upper() + text[1:])
+        fail(text)
     return s, b
 
 
@@ -199,9 +302,12 @@ def check_wip(job: Job) -> None:
     total = w["open_prs"] + len(fresh)
     in_repo = w["open_prs_by_repo"].get(job.repo, 0) + sum(v.get("repo") == job.repo for v in fresh)
     if total >= job.cfg.settings.get("max_open_prs", 3):
-        fail(f"{total} PRs are already open (max {job.cfg.settings.get('max_open_prs', 3)})")
+        raise Failure("wip_limit", f"Couldn't send: you already have {total} pull requests open.",
+                      f"{total} PRs are already open (max {job.cfg.settings.get('max_open_prs', 3)}). "
+                      "It can go once one of them is merged or closed.")
     if in_repo >= job.cfg.settings.get("max_open_prs_per_repo", 1):
-        fail(f"{in_repo} of your PRs are already open in {job.repo}")
+        raise Failure("wip_limit", f"Couldn't send: you already have a pull request open in {job.repo}.",
+                      f"{in_repo} of your PRs are already open in {job.repo}. It can go once that one is merged or closed.")
 
 
 # -- git and GitHub -----------------------------------------------------------
@@ -222,7 +328,10 @@ def apply_patch(work: Path, patch: Path) -> None:
     try:
         git(["apply", "--index", str(patch)], work)
     except ActError:
-        git(["apply", "--3way", str(patch)], work)
+        try:
+            git(["apply", "--3way", str(patch)], work)
+        except ActError as e:
+            raise PatchError(str(e)) from e
 
 
 def clone(full_name: str, into: Path, branch: str | None = None) -> None:
@@ -303,22 +412,25 @@ def submit(job: Job) -> dict:
         if job.dry_run:
             return {"existing_pr": found["html_url"], "calls": ["none: the PR already exists"]}
         job.move(s, "merged" if found.get("merged_at") else "pr_open" if found.get("state") == "open" else "closed")
-        s.pop("last_error", None)
-        s.pop("submitting_at", None)
+        job.clear_problem(s)
         s["pr_url"] = found["html_url"]
         s.setdefault("submitted_at", job.stamp)
         return {"url": found["html_url"], "note": "already existed"}
     if job.dry_run:
         return {"commit_message": message, "signoff": pr["signoff"], "title": title, "body": body,
-                "calls": [f"POST repos/{job.repo}/forks", f"git clone --filter=blob:none <your fork of {job.repo}>",
+                "calls": ["GET user (check the key's permissions)", "GET the issue and its cross-references (is it still free?)",
+                          f"POST repos/{job.repo}/forks", f"git clone --filter=blob:none <your fork of {job.repo}>",
                           f"git fetch upstream {base}", f"git checkout -b {branch} upstream/{base}",
                           "git apply --index draft.patch", f"git commit{' -s' if pr['signoff'] else ''}",
                           f"git push origin {branch}",
                           f"POST repos/{job.repo}/pulls head={login}:{branch} base={base}"]}
 
+    check_taken(job)
+    patch = job.draft_patch()
     job.move(s, "submitting")
     s["submitting_at"] = job.stamp
     try:
+        check_token(patch)  # before the fork and the clone, so a bad key costs nothing
         who = identity(job)
         fork = ensure_fork(job)
         with tempfile.TemporaryDirectory() as tmp:
@@ -337,11 +449,10 @@ def submit(job: Job) -> dict:
     except Exception as e:
         job.move(s, "approved")
         s.pop("submitting_at", None)
-        s["last_error"] = mask(str(e))[:500]
+        job.problem(s, e, patch)
         raise ActError(f"submit failed, it is back to approved: {mask(str(e))}") from e
     job.move(s, "pr_open")
-    s.pop("last_error", None)
-    s.pop("submitting_at", None)
+    job.clear_problem(s)
     s["pr_url"], s["submitted_at"] = made["html_url"], job.stamp
     return {"url": made["html_url"]}
 
@@ -359,8 +470,7 @@ def post(job: Job) -> dict:
         if job.dry_run:
             return {"existing_comment": found["html_url"], "calls": ["none: the comment already exists"]}
         job.move(s, "posted")
-        s.pop("last_error", None)
-        s.pop("submitting_at", None)
+        job.clear_problem(s)
         s["comment_url"] = found["html_url"]
         return {"url": found["html_url"], "note": "already existed"}
     if job.dry_run:
@@ -372,11 +482,10 @@ def post(job: Job) -> dict:
     except Exception as e:
         job.move(s, "approved")
         s.pop("submitting_at", None)
-        s["last_error"] = mask(str(e))[:500]
+        job.problem(s, e)
         raise ActError(f"post failed, it is back to approved: {mask(str(e))}") from e
     job.move(s, "posted")
-    s.pop("last_error", None)
-    s.pop("submitting_at", None)
+    job.clear_problem(s)
     s["comment_url"] = made["html_url"]
     return {"url": made["html_url"]}
 
@@ -409,7 +518,7 @@ def followup(job: Job) -> dict:
     if found := owner_comment(job, m.group(1), int(m.group(3)), reply, since):
         if job.dry_run:
             return {"existing_comment": found["html_url"], "calls": ["none: the reply already exists"]}
-        s.pop("last_error", None)  # the push comes before the reply, so both already happened
+        job.clear_problem(s)  # the push comes before the reply, so both already happened
         s["followup_pushed"] = s["followup_done"] = rel
         s["followup_done_at"] = job.stamp
         job.move(s, "pr_open")
@@ -421,8 +530,10 @@ def followup(job: Job) -> dict:
                      "git commit", "git push origin <the PR's branch>"] + calls
         return {"commit_message": message if patch else None, "body": reply, "calls": calls}
 
+    patch_text = patch.read_text() if patch and not pushed and patch.exists() else ""
     try:
         if patch and not pushed:
+            check_token(patch_text)
             who = identity(job)
             fork, branch = pr_head(job, fu["pr_url"])
             with tempfile.TemporaryDirectory() as tmp:
@@ -434,9 +545,9 @@ def followup(job: Job) -> dict:
             s["followup_pushed"] = rel
         made = ghwrite.comment(m.group(1), int(m.group(3)), reply)
     except Exception as e:
-        s["last_error"] = mask(str(e))[:500]
+        job.problem(s, e, patch_text, followup=True)
         raise ActError(f"follow-up failed: {mask(str(e))}") from e
-    s.pop("last_error", None)
+    job.clear_problem(s)
     s["followup_done"], s["followup_done_at"] = rel, job.stamp
     job.move(s, "pr_open")
     return {"url": made["html_url"]}
@@ -511,9 +622,33 @@ def summary(job: Job) -> dict:
     return {}
 
 
+def refresh(job: Job) -> dict:
+    """Mark a prepared PR to be rebuilt on the project's current code and then sent.
+
+    The rebuild is the act workflow's check and send jobs (refresh.py); this only records
+    that the owner asked, so a rebuilt draft goes out without another tap. A dry run
+    does the apply check (without the project's tests) and says which way it would go.
+    """
+    s, b = ready_item(job, ("pr",))
+    if job.dry_run:
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                verdict = refreshmod.check(job.data, job.key, Path(tmp), run_tests=False)
+            except refreshmod.RefreshError as e:
+                fail(str(e))
+        cmd = verdict["tests"]["command"]
+        same = verdict["structural_ok"]
+        return {"path": "send" if same else "routine", "reason": verdict["reason"] or None,
+                "calls": ["git clone --filter=blob:none <the project, no key>", "git apply --3way draft.patch",
+                          f"run the tests: {cmd}" if cmd else "no test command",
+                          "submit the refreshed patch" if same else "start the routine to rebuild this one item"]}
+    s["send_after_refresh"] = True
+    return {}
+
+
 HANDLERS = {"submit": submit, "post": post, "followup": followup, "approve": approve, "later": later, "skip": skip,
             "prepare": prepare, "pair": pair, "unpair": unpair, "feature": feature, "unfeature": unfeature,
-            "summary": summary}
+            "summary": summary, "refresh": refresh}
 
 
 def run(cfg: Config, data: Path, key: str, action: str, title: str | None = None,
@@ -530,6 +665,10 @@ def run(cfg: Config, data: Path, key: str, action: str, title: str | None = None
     except Exception as e:
         result = mask(str(e))
         result = result if result.startswith(("submit failed", "post failed", "follow-up failed")) else f"refused: {result}"
+        s = st["suggestions"].get(key)
+        if isinstance(e, Failure) and not dry_run and action in ("submit", "post", "followup") and s and s.get("status") in (
+                *PENDING, "submitting", "waiting_on_you", "pr_open"):
+            s["failure"] = job.failure(e, job.draft_patch(), followup=action == "followup")  # refused before anything ran
     if not dry_run:
         acts = st.setdefault("actions", [])
         acts.append({"at": job.stamp, "key": key, "action": action, "result": result,

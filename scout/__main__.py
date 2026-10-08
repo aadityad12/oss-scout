@@ -7,6 +7,9 @@
   python -m scout render         build data/dashboard.html
   python -m scout render-public  build the public portfolio page
   python -m scout act            do what you tapped on the dashboard (runs in the data repo's act workflow)
+  python -m scout refresh-check  try an approved draft on the project's current code (the act workflow's no-secrets job)
+  python -m scout refresh-apply  swap in the refreshed patch and record the result (before the normal submit)
+  python -m scout refresh-request  record that a rebuild by the Claude step is wanted
   python -m scout doctor         check GitHub access
   python -m scout init-data      write the guard hook, settings and CLAUDE.md into the data dir
 """
@@ -141,6 +144,8 @@ def cmd_track(args, cfg, data, gh) -> None:
     statemod.save(data, st)
     print(json.dumps(st["contributions"]["per_repo"], indent=2))
     output("fire", str(fire).lower())
+    if send := track.pending_sends(st):
+        output("send", " ".join(send))  # refreshed drafts the track workflow should now submit
 
 
 def cmd_ingest(args, cfg, data, gh) -> None:
@@ -188,6 +193,38 @@ def cmd_act(args, cfg, data, gh) -> None:
     sys.exit(run(cfg, data, args.key, args.action, args.title, body, args.dry_run))
 
 
+def cmd_refresh_check(args, cfg, data, gh) -> None:
+    from . import refresh
+    try:
+        v = refresh.check(data, args.key, Path(args.out), args.phase, timeout=args.timeout)
+    except refresh.RefreshError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({k: v[k] for k in ("key", "same_fix", "structural_ok", "reason", "tests")}, indent=2))
+    output("applies" if args.phase == "apply" else "same_fix",
+           str(v["structural_ok"] if args.phase == "apply" else v["same_fix"] is True).lower())
+
+
+def cmd_refresh_apply(args, cfg, data, gh) -> None:
+    from . import refresh
+    try:
+        res = refresh.apply_result(data, args.key, Path(args.patch), Path(args.verdict))
+    except (refresh.RefreshError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    log(f"refreshed {args.key}: {res['what_changed']} (tests: {res['tests']})")
+
+
+def cmd_refresh_request(args, cfg, data, gh) -> None:
+    from . import refresh
+    try:
+        res = refresh.request_result(data, args.key, Path(args.verdict))
+    except (refresh.RefreshError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    log(f"{args.key} needs a rebuild: {res['reason']}")
+
+
 def cmd_doctor(args, cfg, data, gh) -> None:
     me = gh.get("user")
     rl = gh.get("rate_limit")["resources"]
@@ -210,6 +247,19 @@ def main(argv: list[str] | None = None) -> None:
     ac.add_argument("--title", default=None, help="edited PR title (or commit message for a follow-up)")
     ac.add_argument("--body-file", default=None, help="file with the edited PR body or comment")
     ac.add_argument("--dry-run", action="store_true", help="run the checks and print the plan; write nothing")
+    rc = sub.add_parser("refresh-check")
+    rc.add_argument("--key", required=True, help="owner/repo#123")
+    rc.add_argument("--out", required=True, help="directory for new.patch and verdict.json")
+    rc.add_argument("--phase", choices=("apply", "tests", "all"), default="all",
+                    help="apply writes the patch before any project code runs; tests then runs the briefing's tests")
+    rc.add_argument("--timeout", type=int, default=900, help="seconds the project's tests may run")
+    ra = sub.add_parser("refresh-apply")
+    ra.add_argument("--key", required=True)
+    ra.add_argument("--patch", required=True, help="the refreshed patch from the check job")
+    ra.add_argument("--verdict", required=True, help="the check job's verdict.json")
+    rr = sub.add_parser("refresh-request")
+    rr.add_argument("--key", required=True)
+    rr.add_argument("--verdict", required=True)
     rp = sub.add_parser("render-public")
     rp.add_argument("--out", default=None, help="output dir (default: <data_dir>/site)")
     rp.add_argument("--domain", default=None, help="custom domain, written as CNAME")
@@ -220,7 +270,8 @@ def main(argv: list[str] | None = None) -> None:
     gh = GitHub(cache_dir=data / ".cache")
     {"run": cmd_run, "track": cmd_track, "ingest": cmd_ingest,
      "digest": cmd_digest, "render": cmd_render, "render-public": cmd_render_public, "doctor": cmd_doctor,
-     "init-data": cmd_init_data, "act": cmd_act}[args.cmd](args, cfg, data, gh)
+     "init-data": cmd_init_data, "act": cmd_act, "refresh-check": cmd_refresh_check,
+     "refresh-apply": cmd_refresh_apply, "refresh-request": cmd_refresh_request}[args.cmd](args, cfg, data, gh)
 
 
 if __name__ == "__main__":
