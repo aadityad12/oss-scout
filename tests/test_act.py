@@ -217,7 +217,9 @@ def test_dry_run_changes_nothing_and_prints_the_plan(env, capsys):
 
 
 @pytest.mark.parametrize("name,setup,needle", [
-    ("guide mode", lambda e: e.edit_briefing(mode="guide"), "guide mode"),
+    ("legacy guide mode", lambda e: e.edit_briefing(mode="guide"), "pair mode"),
+    ("pair mode", lambda e: e.edit_briefing(mode="pair"), "pair mode"),
+    ("own mode", lambda e: e.edit_briefing(mode="own"), "own mode"),
     ("posts forbidden", lambda e: e.edit_briefing(ai_posts_forbidden=True), "forbids AI-written posts"),
     ("not marked ready", lambda e: e.edit_briefing(ready=False), "not marked ready"),
     ("wrong status", lambda e: e.set_status("pr_open"), "status is pr_open"),

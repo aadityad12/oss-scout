@@ -106,7 +106,8 @@ def cmd_run(args, cfg, data, gh) -> None:
         issue["activity"] = act
         issue["repo_info"] = {k: repos[issue["repo"]].get(k) for k in (
             "stars", "language", "friendliness", "merge_rate", "median_days_to_merge",
-            "median_hours_to_first_response", "merges_elsewhere", "ai_policy", "ai_policy_evidence", "cla",
+            "median_hours_to_first_response", "merges_elsewhere", "ai_policy", "ai_policy_evidence", "ai_mode",
+            "ai_posts_forbidden", "disclosure_required", "cla",
             "policy_files", "owner_type", "confident")}
         final.append(issue)
         per_repo[issue["repo"]] = per_repo.get(issue["repo"], 0) + 1

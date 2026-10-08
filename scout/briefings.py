@@ -44,11 +44,26 @@ def slug(key: str) -> str:
     return repo.replace("/", "__") + f"__{number}"
 
 
-MODES = {"draft", "guide"}
+# How a suggestion is worked (see policy.py): draft = AI may write code and posts (one-tap possible),
+# pair = AI-assisted code on the laptop, posts written by the owner, own = the owner writes the code.
+MODES = {"draft", "pair", "own"}
+LEGACY_MODES = {"guide": "pair"}  # the old "no code from Claude" mode, read as pair
+# pair / own briefings may carry these; each is a list of strings
+PAIR_FIELDS = ("fix_plan", "code_locations", "explain_questions", "pr_facts", "comment_facts")
 KINDS = {"pr", "repro", "triage", "review"}
 FOLLOWUP_KINDS = {"small", "discuss"}
 PR_FIELDS = ("title", "body", "branch", "base")
 AI_MARKERS = ("co-authored-by", "generated with", "🤖")
+
+
+def mode_of(b: dict) -> str:
+    """The briefing's mode, with the legacy `guide` read as `pair`. Use this wherever mode is read.
+
+    A missing or non-string mode counts as draft; an unknown string is returned as is so
+    validate() can report it.
+    """
+    mode = b.get("mode", "draft")
+    return LEGACY_MODES.get(mode, mode) if isinstance(mode, str) else "draft"
 
 
 def has_ai_marker(*texts) -> bool:
@@ -58,8 +73,9 @@ def has_ai_marker(*texts) -> bool:
 def validate(b: dict, folder: Path | None = None) -> list[str]:
     """Problems with a briefing. With `folder`, also checks the files a ready item needs."""
     problems = [f"missing {k}" for k in REQUIRED if k not in b]
-    if b.get("mode", "draft") not in MODES:
+    if mode_of(b) not in MODES:
         problems.append(f"mode should be one of {sorted(MODES)}")
+    problems += _pair_problems(b)
     problems += [f"{k} should be {t.__name__}" for k, t in REQUIRED.items()
                  if k in b and not isinstance(b[k], t)]
     kind = b.get("kind", "pr")
@@ -76,9 +92,24 @@ def validate(b: dict, folder: Path | None = None) -> list[str]:
     return problems
 
 
+def _pair_problems(b: dict) -> list[str]:
+    """Optional pair/own fields, and the rule that a pair/own briefing carries facts, never post prose."""
+    problems = []
+    for k in PAIR_FIELDS:
+        if k in b and not (isinstance(b[k], list) and all(isinstance(x, str) for x in b[k])):
+            problems.append(f"{k} should be a list of strings")
+    # Only for briefings that say pair/own themselves: an old `guide` briefing keeps validating.
+    if b.get("mode") in ("pair", "own") and isinstance(b.get("claim_comment"), str):
+        lines = [ln for ln in b["claim_comment"].splitlines() if ln.strip()]
+        if not all(ln.lstrip().startswith("- ") for ln in lines):
+            problems.append("claim_comment in a pair/own briefing should be bullet facts (each line starts with '- '), "
+                            "not text to paste")
+    return problems
+
+
 def _ready_problems(b: dict, kind: str, folder: Path | None) -> list[str]:
     problems = []
-    if b.get("mode", "draft") != "draft":
+    if mode_of(b) != "draft":
         problems.append("a ready item needs mode draft")
     if b.get("ai_posts_forbidden"):
         problems.append("a ready item can't be AI-written when the project forbids AI-written posts")
@@ -137,8 +168,8 @@ def validate_followup(fu: dict, folder: Path | None = None, briefing: dict | Non
             problems.append("discuss follow-up carries no patch")
     if patch is not None and not isinstance(patch, str):
         problems.append("patch should be a file name or null")
-    elif patch and briefing and briefing.get("mode", "draft") != "draft":
-        problems.append("guide mode: no patch")
+    elif patch and briefing and mode_of(briefing) != "draft":
+        problems.append(f"{mode_of(briefing)} mode: no patch")
     elif patch and folder and not (folder / patch).exists():
         problems.append(f"{patch} is missing")
     return problems
@@ -169,10 +200,10 @@ def load_all(data: Path) -> list[dict]:
         b = json.loads(f.read_text())
         patch = f.parent / "draft.patch"
         b["_dir"] = str(f.parent.relative_to(data))
-        b.setdefault("mode", "draft")
-        # guide mode means the project doesn't accept AI-written code: never show a patch
+        b["_problems"] = validate(b, f.parent)  # on the mode as written, so a legacy `guide` keeps validating
+        b["mode"] = mode_of(b)  # the one place that turns legacy `guide` into `pair`
+        # pair / own: no AI-written patch or post to show or send
         b["_patch"] = patch.read_text() if patch.exists() and b["mode"] == "draft" else ""
-        b["_problems"] = validate(b, f.parent)
         b["_pr"] = read_json(f.parent / "pr.json") if b["mode"] == "draft" else {}
         post = f.parent / "post.md"
         b["_post"] = post.read_text() if post.exists() else ""

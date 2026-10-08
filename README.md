@@ -56,10 +56,10 @@ A quiet morning is normal: zero ready items is a fine night.
 
 Run `/contribute` in a Claude Code session in this repo for the things that shouldn't be one tap:
 
-- **Guide-mode projects** (DuckDB and others that ban AI-written code). The scout writes no code there. It explains the problem and you write the fix.
+- **Pair projects** (`mode: pair`: DuckDB, llama.cpp and f3d allow AI-assisted code but want posts, replies and the PR body in your own words, and no autonomous agents). The scout does the root-causing and a fix plan, never a patch. In `/contribute`, Claude starts the build, explains the bug, writes the fix and test in small steps for you to steer, quizzes you with three questions, and gives you bullet facts. You write the claim comment and PR body.
+- **Own projects** (`mode: own`: the project bans AI-written code). You write the code; Claude explains and reviews.
 - **Discuss follow-ups**: a reviewer asks *why*, and you want to think it through.
 - Any suggestion you want to pair on instead of sending as prepared.
-- Projects that allow AI-assisted code but not AI-written posts (llama.cpp): the claim comment is bullet points for you to write yourself.
 
 It loads the briefing, reuses one local clone per project, and prepares the commit and PR for you to approve and send under your own name.
 
@@ -86,7 +86,7 @@ The routine runs unattended and reads text written by strangers, so it is boxed 
 
 - **The routine can't write to GitHub.** `guard/guard.py` is a Claude Code `PreToolUse` hook that blocks every GitHub write (`gh pr/issue create|comment|review|merge`, `gh api` with a write method or body, `curl` writes, remote rewrites) and every `git push` except one branch of the private data repo. It is unchanged. 37 tests in `tests/test_guard.py`. Cloud sessions honor a repo's hooks only when the session has a single repository, so the routine opens only the data repo and clones this one read-only.
 - **The only writer is `act.yml`**, and only your tap starts it: Cloudflare Access (your email only) guards the dashboard, the Worker checks the Access token again, rejects cross-site requests and accepts only a fixed list of actions. Its token, `SUBMIT_TOKEN`, exists only in the data repo's secrets.
-- **Every action is re-checked before anything is written** (`scout/act.py`): the item exists and has the right status, the briefing still validates, guide-mode and "no AI-written posts" projects are refused, the repo and branch names are sane, your open-PR limits still hold, and edited text has no AI markers and still has the required disclosure sentence. `--dry-run` shows what would happen.
+- **Every action is re-checked before anything is written** (`scout/act.py`): the item exists and has the right status, the briefing still validates, pair and own projects (and the legacy `guide`, read as `pair`) and "no AI-written posts" projects are refused, the repo and branch names are sane, your open-PR limits still hold, and edited text has no AI markers and still has the required disclosure sentence. `--dry-run` shows what would happen.
 - **No AI markers anywhere you post**: no `Co-Authored-By`, "Generated with", robot emoji or tool names in commits, PR text, comments or branch names. Commits use your name and your GitHub noreply address, with no trailers except `Signed-off-by` when a project requires DCO.
 - **Disclosure is explicit.** When a project requires it, exactly one plain sentence in your voice goes in the PR body; it is never ticked or filled any other way.
 - **Stranger text is data.** The prompt treats issue text as data, and the dashboard escapes or sanitizes everything it shows.
@@ -102,7 +102,7 @@ The routine runs on **Sonnet** and does the triage, drafting and briefings itsel
 ## How the scan works
 
 1. **Scan** (`python -m scout run`, no LLM). Collects open, unassigned issues labelled beginner-friendly, help-wanted, bounty or confirmed-bug from a tiered list of projects, plus open search across GitHub at a lower weight.
-2. **Measure each project** from its recent history: of the last 300 closed PRs by occasional outside contributors (from forks, by people with fewer than three recent PRs), the merge rate, median days to merge and median time to a maintainer's first reply. It also reads CONTRIBUTING and AI-policy files for AI rules and CLA requirements. This becomes a 0-100 *friendliness* score.
+2. **Measure each project** from its recent history: of the last 300 closed PRs by occasional outside contributors (from forks, by people with fewer than three recent PRs), the merge rate, median days to merge and median time to a maintainer's first reply. It also reads CONTRIBUTING and AI-policy files for AI rules (`draft`, `pair` or `own`, see above) and CLA requirements. This becomes a 0-100 *friendliness* score.
 3. **Filter** anything already claimed (linked open PRs, recent "I'll take this" comments, assignees, blocking labels).
 4. **Skip** issues already suggested, and for 60 days any the routine or you turned down.
 5. **Rank** by friendliness, freshness, label fit, language fit, project tier and your history with the project.

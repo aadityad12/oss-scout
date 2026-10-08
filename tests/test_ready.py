@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 from scout import briefings, config, datarepo, digest, state as statemod, wip
 
 NOW = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
@@ -132,8 +134,9 @@ def test_ready_pr_disclosure_and_ai_markers(tmp_path):
     assert "pr.json contains an AI marker" in briefings.validate(b, d)
 
 
-def test_ready_pr_in_guide_mode_is_invalid(tmp_path):
-    b = good_briefing(ready=True, mode="guide")
+@pytest.mark.parametrize("mode", ["guide", "pair", "own"])
+def test_ready_pr_in_non_draft_mode_is_invalid(tmp_path, mode):
+    b = good_briefing(ready=True, mode=mode)
     d = write(tmp_path, b, PR_JSON)
     assert "a ready item needs mode draft" in briefings.validate(b, d)
 
@@ -240,8 +243,9 @@ def test_validate_followup(tmp_path):
 def test_followup_respects_project_policy():
     assert briefings.validate_followup(SMALL, None, {"ai_posts_forbidden": True}) == [
         "the project forbids AI-written posts: use discuss with talking_points"]
-    assert briefings.validate_followup(SMALL, None, {"mode": "guide"}) == ["guide mode: no patch"]
-    assert briefings.validate_followup(DISCUSS, None, {"ai_posts_forbidden": True, "mode": "guide"}) == []
+    assert briefings.validate_followup(SMALL, None, {"mode": "guide"}) == ["pair mode: no patch"]
+    assert briefings.validate_followup(SMALL, None, {"mode": "own"}) == ["own mode: no patch"]
+    assert briefings.validate_followup(DISCUSS, None, {"ai_posts_forbidden": True, "mode": "pair"}) == []
 
 
 def test_ingest_points_the_suggestion_at_the_latest_followup(tmp_path):

@@ -181,8 +181,8 @@ def ready_item(job: Job, kinds: tuple[str, ...]) -> tuple[dict, dict]:
         fail("the briefing's kind does not match the suggestion")
     if b.get("ready") is not True:
         fail("the briefing is not marked ready")
-    if b.get("mode", "draft") != "draft":
-        fail("guide mode: this project does not accept AI-written work")
+    if (mode := briefings.mode_of(b)) != "draft":  # a legacy `guide` counts as pair
+        fail(f"{mode} mode: this is done on the laptop, not sent from here")
     if b.get("ai_posts_forbidden"):
         fail("this project forbids AI-written posts")
     if problems := briefings.validate(b, job.folder):

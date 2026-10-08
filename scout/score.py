@@ -168,6 +168,9 @@ def measure(gh: GitHub, repo: str, now: datetime | None = None) -> dict:
         "friendliness": round(friendliness, 3),
         "ai_policy": pol["ai"],
         "ai_policy_evidence": pol["evidence"],
+        "ai_mode": pol.get("mode", "draft"),
+        "ai_posts_forbidden": pol.get("ai_posts_forbidden", False),
+        "disclosure_required": pol.get("disclosure_required", False),
         "cla": pol["cla"],
         "policy_files": pol["files"],
     }

@@ -23,19 +23,26 @@ public; you clone it read-only into `/tmp/oss-scout`. **Never push to it.**
    in the briefing, or skip the issue. Zero picks is a fine night. Never claim a
    test ran if it didn't. Never mark an item `ready` unless it is fully prepared and
    you would put your name on it.
-4. Respect each project's AI policy, read in full (the scanner's `ai_policy` is only a
-   hint). Decide the **mode** for each pick:
-   - `draft`: the project allows AI-assisted code (possibly with disclosure). You may
-     write a draft patch.
-   - `guide`: the project forbids AI-generated PRs or code (DuckDB does). **Write no
-     code and no patch**, and the item is never `ready`. The briefing explains the
-     problem, where it lives and how to test a fix, so the human can write it. Use
-     guide mode whenever you're unsure.
-   - skip: the project bans AI involvement entirely, or the issue isn't worth it.
-   - Some projects allow AI-assisted code but forbid AI-written *posts* (issues,
-     comments, PR descriptions; llama.cpp is one). Set `"ai_posts_forbidden": true` in
-     the briefing; the item is never `ready`, and `claim_comment` is bullet points
-     starting with "WRITE THIS YOURSELF:", never finished prose.
+4. Respect each project's AI policy, read in full (the scanner's `ai_policy` and
+   `ai_mode` are only hints). Decide the **mode** for each pick:
+   - `draft`: AI may write code and posts (the project may ask for a disclosure). You
+     may write a draft patch, and the item can be `ready`.
+   - `pair`: AI-assisted coding is allowed, but posts, replies and the PR body must be
+     written by the owner, and/or autonomous agents are banned (DuckDB, llama.cpp and
+     f3d are like this). Do the full root-causing and the fix plan, but write **no
+     patch** and never mark it `ready`. The owner does it on the laptop with
+     `/contribute`: Claude writes the code interactively while explaining it, and the
+     owner writes every word that gets posted. Set `"ai_posts_forbidden": true` when
+     the policy restricts posts.
+   - `own`: the project bans AI-written code outright. **No patch**, never `ready`.
+     The briefing explains the problem, where it lives and how to test a fix; the
+     owner writes the code and Claude only explains and reviews.
+   - skip: the project bans AI involvement entirely and it makes the issue pointless,
+     or the issue isn't worth it.
+   - When unsure between `draft` and `pair`, use `pair`. Use `own` only when the text
+     bans AI-written code.
+   - `pair` and `own` briefings never contain finished prose for a post. `claim_comment`
+     is bullet facts ("- seen on 1.4, only with PREPARE"); the owner writes the comment.
 5. **No AI markers, ever**, in anything the owner might post: no `Co-Authored-By`,
    "Generated with", robot emoji, or tool names in commit messages, PR titles or
    bodies, comments, or branch names. The one exception is the disclosure sentence
@@ -84,7 +91,7 @@ This run is on Sonnet; do the triage, drafting and briefings yourself.
      the reply. One tap later.
    - `discuss`: the reviewer questions the approach or asks why. Talking points only,
      `patch: null`; the owner takes it to a `/contribute` session.
-   - Guide-mode projects: no patch. `ai_posts_forbidden` projects: `discuss` only.
+   - `pair` and `own` projects: no patch, and `discuss` only.
 4. **Impact lines for merged PRs.** For each PR in `contributions.prs` with status
    `merged` whose `url` has no entry in `state.json` → `public.summaries`, add one: a
    single plain-English line a recruiter understands, under 120 characters, saying what
@@ -117,8 +124,9 @@ This run is on Sonnet; do the triage, drafting and briefings yourself.
    b. Shallow-clone into `/tmp/work/<slug>` (`git clone --depth 50`). Use `rg` to find
       the code; don't read the whole repo. Summarize long threads with Haiku.
    c. Reproduce cheaply if you can. `draft`: write the smallest correct fix in the
-      project's style, plus a test if the project expects one. `guide`: stop at
-      understanding; describe the fix and a test, write no code.
+      project's style, plus a test if the project expects one. `pair` and `own`: do
+      the root-causing in full and write the fix plan and the test plan, but no patch and
+      no code to paste.
    d. Run the narrowest relevant tests, ~10 minutes at most. Large C++ projects often
       can't be built in time: then say exactly what wasn't verified and how to check
       it locally, and don't mark the item `ready` unless that is acceptable to ship.
@@ -129,10 +137,15 @@ This run is on Sonnet; do the triage, drafting and briefings yourself.
      "key": "owner/repo#123", "repo": "owner/repo", "number": 123,
      "title": "...", "url": "https://github.com/owner/repo/issues/123",
      "picked_at": "<ISO timestamp>",
-     "mode": "draft | guide",
+     "mode": "draft | pair | own",
      "kind": "pr | repro | triage | review   (optional, default pr)",
      "ready": "true only if fully prepared for one-tap submit (optional, default false)",
      "ai_posts_forbidden": "true if the project forbids AI-written posts (optional)",
+     "fix_plan": ["pair/own only, optional: ordered steps of the fix"],
+     "code_locations": ["pair/own only, optional: path:line — why it matters"],
+     "explain_questions": ["pair/own only, optional: 3 questions the owner should be able to answer before opening the PR, each with a short answer: 'Why does X? — because Y'"],
+     "pr_facts": ["pair/own only, optional: bullet facts the owner writes the PR body from"],
+     "comment_facts": ["pair/own only, optional: bullet facts for the claim comment"],
      "post_target": "URL of the issue or PR to comment on (ready repro/triage/review only)",
      "models_used": [{"model": "sonnet", "did": "triage, draft, briefing"}, {"model": "opus", "did": "root cause"}],
      "summary": "The issue in 2-4 plain-English sentences.",
@@ -140,11 +153,11 @@ This run is on Sonnet; do the triage, drafting and briefings yourself.
      "difficulty": "easy | medium | hard",
      "time_estimate": "e.g. 45-90 min for review + local testing",
      "walkthrough": "Markdown. How the relevant part of the codebase works: files, functions, data flow. Define every project-specific term. Written for someone fluent in the language but new to this codebase.",
-     "change_explained": "Markdown. Draft mode: the change piece by piece, what each hunk does and why. Guide mode: the root cause, where a fix belongs and what it must do, the traps to avoid, and a test plan, but no code.",
+     "change_explained": "Markdown. Draft mode: the change piece by piece, what each hunk does and why. Pair and own mode: the root cause, where a fix belongs and what it must do, the traps to avoid, and a test plan, but no code.",
      "alternatives": ["Other approach — why it was rejected"],
      "maintainer_qa": [{"q": "A question a reviewer is likely to ask", "a": "A good answer, in the contributor's voice"}],
      "tests": {"ran": true, "command": "...", "result": "...", "not_verified": "What still needs checking, and how"},
-     "claim_comment": "A short, specific, humble comment for the HUMAN to post on the issue before starting (their plan in 2-3 sentences). No mention of automation.",
+     "claim_comment": "Draft mode: a short, specific, humble comment for the HUMAN to post on the issue before starting (their plan in 2-3 sentences). No mention of automation. Pair and own mode: bullet facts only, every line starting with '- '; never text to paste.",
      "submit_steps": ["Fork owner/repo", "git checkout -b fix-123", "git apply draft.patch", "..."],
      "ai_disclosure": "What this repo's policy asks for about AI assistance, and whether the PR body carries the disclosure sentence.",
      "confidence": "high | medium | low — and one sentence on why",

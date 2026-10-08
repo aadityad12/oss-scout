@@ -394,11 +394,14 @@ const FLIGHT = {
 
 /* ---------- the 30-second read ---------- */
 
+// how a suggestion is worked: draft ready = one tap; pair / own = on the laptop (a legacy "guide" is read as pair upstream)
+const MODE_LABEL = { pair: "Laptop · pair", own: "Laptop · you write it" };
 function read30(it) {
   const b = it.briefing || {}, pr = it.pr || {}, tests = b.tests || {};
   const fix = (it.pr && pr.title) || firstSentence(b.change_explained);
   let proof;
-  if (b.mode === "guide") proof = "You write the fix and its tests.";
+  if (b.mode === "own") proof = "You write the fix and its tests.";
+  else if (b.mode === "pair") proof = "Claude writes it with you; you write every post.";
   else proof = tests.ran ? `Tests ran${tests.result ? `: ${esc(firstSentence(tests.result, 110))}` : ""}` : `Tests <span class="bad">not run</span>`;
   const conf = firstSentence(b.confidence, 150).replace(/[.]$/, "");
   const line = (lab, html) => html ? `<div class="l"><span class="lab">${lab}</span><span class="v">${html}</span></div>` : "";
@@ -416,7 +419,7 @@ function folds(b, withWhy) {
   const alts = (b.alternatives || []).map(a => `<li>${code(a)}</li>`).join("");
   const out = [
     withWhy ? fold("Why this one", `<div class="md">${md(b.why)}</div>`) : "",
-    withWhy ? fold(b.mode === "guide" ? "What the fix needs to do" : "The change, explained", `<div class="md">${md(b.change_explained)}</div>`) : "",
+    withWhy ? fold(b.mode === "pair" || b.mode === "own" ? "What the fix needs to do" : "The change, explained", `<div class="md">${md(b.change_explained)}</div>`) : "",
     fold("Be ready for review", qa ? `<div class="qa">${qa}</div>` : ""),
     fold("How the code works", `<div class="md">${md(b.walkthrough)}</div>`),
     fold("Alternatives considered", alts ? `<ul>${alts}</ul>` : ""),
@@ -478,8 +481,8 @@ function prepareBlock(it) {
   const b = it.briefing || {};
   if (it.status !== "suggested" || it.pairing) return { blocked: "", defs: [] };  // pairing means you do it yourself
   if (it.prepare_requested_at) return { blocked: `<p class="reason"><b>Requested for tonight.</b> The next nightly run will try to prepare it.</p>`, defs: [] };
-  if (b.mode === "guide") return { blocked: `<p class="reason">Prepare isn't offered: this project doesn't accept AI-written code, so you write the fix. Pair on your laptop instead.</p>`, defs: [] };
-  if (b.ai_posts_forbidden) return { blocked: `<p class="reason">Prepare isn't offered: this project forbids AI-written posts. Pair on your laptop instead.</p>`, defs: [] };
+  if (b.mode === "own") return { blocked: `<p class="reason">Prepare isn't offered: this project doesn't accept AI-written code, so you write the fix. Use your laptop; Claude explains and reviews.</p>`, defs: [] };
+  if (b.mode === "pair" || b.ai_posts_forbidden) return { blocked: `<p class="reason">Prepare isn't offered: this project wants posts written by you, not AI. Pair on your laptop instead.</p>`, defs: [] };
   return { blocked: "", defs: [["prepare", "Prepare this", "primary wide"]] };
 }
 
@@ -562,10 +565,10 @@ function rowParts(it, group) {
   const title = b.title || it.title;
   let chips = "";
   if (group === "ready" || (group === "snoozed" && ["ready", "approved"].includes(it.status))) {
-    chips = `<span class="kind">${esc(KIND[it.kind || "pr"] || "Comment")}</span>${it.status === "approved" ? `<span class="st on">Approved</span>` : ""}`;
+    chips = `<span class="kind">${esc(KIND[it.kind || "pr"] || "Comment")}</span><span class="tag">One tap</span>${it.status === "approved" ? `<span class="st on">Approved</span>` : ""}`;
     if (it.pairing) chips += `<span class="tag">Pairing</span>`;
   } else {
-    chips = `${b.mode === "guide" ? `<span class="tag">You write it</span>` : b.difficulty ? `<span class="tag">${esc(b.difficulty)}</span>` : ""}${it.pairing ? `<span class="tag">Pairing</span>` : ""}${it.prepare_requested_at ? `<span class="st on">Requested</span>` : ""}`;
+    chips = `${MODE_LABEL[b.mode] ? `<span class="tag">${MODE_LABEL[b.mode]}</span>` : b.difficulty ? `<span class="tag">${esc(b.difficulty)}</span>` : ""}${it.pairing ? `<span class="tag">Pairing</span>` : ""}${it.prepare_requested_at ? `<span class="st on">Requested</span>` : ""}`;
   }
   if (group === "snoozed") chips += `<span class="tag">Back ${esc(inDays(it.snoozed_until))}</span>`;
   return { ref: it.key, title, late: false, chips, age: short(it.suggested_at) };
