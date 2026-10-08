@@ -52,6 +52,8 @@ flowchart LR
 
 A quiet morning is normal: zero ready items is a fine night.
 
+**When a send fails**, the item stays on the page with a plain reason (the project changed the same files, your GitHub key needs a permission, someone else sent a fix, and so on), a "refresh by" date, and the email's first section says the same. If the project moved on, tap **Refresh & send**: a job with no secrets tries your saved change on the project's current code and runs its tests, and if it is still the same fix the PR goes out. If not, the Claude routine rebuilds that one item, and the PR goes out within about three hours only if the fix itself is unchanged; otherwise the card asks you to read the new diff. Past the refresh-by date, or after two failed refreshes, it becomes a briefing for your laptop and its slot is freed.
+
 ## When to use `/contribute` on the laptop
 
 Run `/contribute` in a Claude Code session in this repo for the things that shouldn't be one tap:
@@ -73,7 +75,8 @@ It loads the briefing, reuses one local clone per project, and prepares the comm
 ## One-time setup checklist
 
 - [ ] **Secrets in `oss-scout`** (public repo): `DATA_REPO_TOKEN`, `ROUTINE_FIRE_URL`, `ROUTINE_TOKEN` (already set).
-- [ ] **`SUBMIT_TOKEN` in `oss-scout-data`** (Settings, Secrets and variables, Actions): a *classic* personal access token with only the `public_repo` scope, created on your account. It's the only place this token lives. The routine never sees it.
+- [ ] **`SUBMIT_TOKEN` in `oss-scout-data`** (Settings, Secrets and variables, Actions): a *classic* personal access token with the `public_repo` scope, plus `workflow` so it can send changes under `.github/workflows/`. Created on your account. It's the only place this token lives. The routine never sees it. A missing `workflow` permission is caught before anything is cloned and shown on the card.
+- [ ] **`ROUTINE_FIRE_URL` and `ROUTINE_TOKEN` in `oss-scout-data`** too (the same two values as in `oss-scout`'s secrets): Refresh & send uses them to start the routine for one item when the automatic check can't tell it is the same fix. Without them the rebuild waits for the next nightly run.
 - [ ] **Rotate it every 90 days**: make a new token, replace the secret, then set `[submit] token_rotated` in `targets.toml` to today. The email and dashboard warn after 80 days.
 - [ ] **Install the workflow**: in a checkout of the data repo's **default branch, `main`**, run `SCOUT_DATA_DIR=<that checkout> python3 -m scout init-data`, then commit and push `.github/workflows/act.yml` along with the `.claude/` files (`workflow_dispatch` only finds workflows on the default branch). Re-run it after changing `scout/datarepo.py`.
 - [ ] **Worker**: follow [`worker/README.md`](worker/README.md) (Cloudflare Access app, a fine-grained token limited to `oss-scout-data`, `npx wrangler deploy`, two secrets, Resend).
@@ -106,7 +109,7 @@ The routine runs on **Sonnet** and does the triage, drafting and briefings itsel
 3. **Filter** anything already claimed (linked open PRs, recent "I'll take this" comments, assignees, blocking labels).
 4. **Skip** issues already suggested, and for 60 days any the routine or you turned down.
 5. **Rank** by friendliness, freshness, label fit, language fit, project tier and your history with the project.
-6. **Prepare.** The routine picks, reproduces and drafts where it can, and writes the briefing and, for the ready item, the files `act` uses. Work in flight is limited (`max_open_prs`, `max_open_prs_per_repo`, one ready item at a time).
+6. **Prepare.** The routine picks, reproduces and drafts where it can, and writes the briefing and, for the ready item, the files `act` uses. Work in flight is limited (`max_open_prs`, `max_open_prs_per_repo`, and `max_unsent` prepared items, new or failed, waiting to be sent).
 7. **Track** what you actually did, read from GitHub, never self-reported: `suggested → claimed → pr_open → waiting_on_you → merged`; prepared items go `ready → approved → submitting → pr_open` (or `posted`).
 
 ## Commands
@@ -121,6 +124,8 @@ python3 -m scout render        # build data/dashboard.html
 python3 -m scout render-public # build the public page
 python3 -m scout init-data     # install guard, settings and act.yml into the data dir
 python3 -m scout act --key owner/repo#123 --action submit --dry-run   # what a tap would do
+python3 -m scout act --key owner/repo#123 --action refresh --dry-run  # would a refresh be the same fix? (no tests run)
+python3 -m scout refresh-check --key owner/repo#123 --out /tmp/out        # the workflow's no-secrets check
 ```
 
 `SCOUT_DATA_DIR` points at the data directory (default `./data`). Standard library only, Python 3.11+. Reads use `gh api` when the GitHub CLI is available and fall back to `GH_TOKEN`; REST only, because the cloud GitHub proxy blocks most GraphQL. Writes live only in `scout/ghwrite.py`.

@@ -258,12 +258,12 @@ test("validates the input", async () => {
 test("accepts every action and the size limits", async () => {
   for (const action of ACTIONS) assert.equal(parseAct({ key: "a-b/c.d_e#123", action, body: "" }).action, action);
   assert.ok(!parseAct({ key: "o/r#7", action: "submit", title: "t".repeat(256), body: "b".repeat(40000) }).error);
-  assert.deepEqual([...ACTIONS].sort(), ["approve", "feature", "followup", "later", "pair", "post", "prepare", "skip", "submit", "summary", "unfeature", "unpair"]);
+  assert.deepEqual([...ACTIONS].sort(), ["approve", "feature", "followup", "later", "pair", "post", "prepare", "refresh", "skip", "submit", "summary", "unfeature", "unpair"]);
 });
 
 test("the new actions send no text, except summary", () => {
   const blank = { title: "", body_b64: "", dry_run: "false" };
-  for (const action of ["prepare", "pair", "unpair", "feature", "unfeature"]) {
+  for (const action of ["prepare", "pair", "unpair", "feature", "unfeature", "refresh"]) {
     // title and body are ignored, even when they would be invalid for another action
     assert.deepEqual(parseAct({ key: "o/r#7", action, title: "t", body: "b" }).inputs, { key: "o/r#7", action, ...blank });
     assert.deepEqual(parseAct({ key: "o/r#7", action, title: 5, body: { x: 1 } }).inputs, { key: "o/r#7", action, ...blank });
@@ -275,6 +275,13 @@ test("the new actions send no text, except summary", () => {
   assert.equal(parseAct({ key: "o/r#7", action: "summary", body: "ünï ✓" }).inputs.body_b64, toBase64("ünï ✓"));
   // an empty summary is allowed and means remove
   assert.deepEqual(parseAct({ key: "o/r#7", action: "summary", body: "" }).inputs, { key: "o/r#7", action: "summary", ...blank });
+});
+
+test("refresh is dispatched through the act workflow with no text", async () => {
+  const res = await run(await postAct({ key: "o/r#7", action: "refresh", title: "ignored", body: "ignored" }), DISPATCH);
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(githubCalls()[0].init.body).inputs, { key: "o/r#7", action: "refresh", title: "", body_b64: "", dry_run: "false" });
+  assert.equal((await run(await postAct({ key: "o/r#7", action: "refreshh" }), DISPATCH)).status, 400);
 });
 
 test("a new action is dispatched through the act workflow", async () => {
@@ -342,6 +349,42 @@ test("the digest subject names what needs you, most urgent first", () => {
   assert.equal(buildEmail({ ...one, waiting_on_you: [], ready: [], new_briefings: [], token_warning: true }, ENV).subject, "token needs rotating");
   assert.equal(buildEmail({ ...one, waiting_on_you: [], ready: [], new_briefings: [] }, ENV).subject, "Nothing needs you today");
   assert.equal(buildEmail({ ...one, waiting_on_you: [w("a/b#1")], token_warning: true }, ENV).subject, "Reply needed on a/b#1 · 1 ready · 2 new · token needs rotating");
+});
+
+const STUCK = {
+  key: "manankharwar/fusioncore#161", slug: "manankharwar__fusioncore__161", title: "Add <tests> for the converter",
+  plain: "Couldn't send: fusioncore changed ci.yml on Oct 5, after this draft was written.",
+  why: "The project edited ci.yml, so the saved change no longer fits.", fix_action: "refresh", refresh_by: "2026-10-12", refreshing: false,
+};
+
+test("a failed send leads the email, with the reason and the refresh-by date", () => {
+  const m = buildEmail({ ...DIGEST, stuck: [STUCK] }, ENV);
+  assert.equal(m.subject, "Couldn't send manankharwar/fusioncore#161 · 2 replies overdue · 1 ready · 1 new · token needs rotating");
+  assert.ok(m.html.indexOf("Couldn't send</h2>") > 0 && m.html.indexOf("Couldn't send</h2>") < m.html.indexOf("Ready for one tap"));
+  assert.ok(m.html.indexOf("Couldn't send</h2>") < m.html.indexOf("Waiting on you"));
+  assert.match(m.html, /Couldn(?:'|&#39;)t send: fusioncore changed ci\.yml on Oct 5, after this draft was written\./);
+  assert.match(m.html, /no longer fits/);
+  assert.match(m.html, /Refresh by Oct 12\./);
+  assert.match(m.html, /href="https:\/\/me\.aadityad\.dev\/#manankharwar__fusioncore__161"/);
+  assert.match(m.html, /Add &lt;tests&gt; for the converter/); // escaped
+  assert.match(m.text, /^OSS Scout 2026-10-02\nCouldn't send:\nCouldn't send: fusioncore changed ci\.yml on Oct 5, after this draft was written\. The project edited ci\.yml, so the saved change no longer fits\. Refresh by Oct 12\. \(manankharwar\/fusioncore#161\)/);
+});
+
+test("the stuck section says when a refresh is already running, and only appears with something stuck", () => {
+  const running = buildEmail({ ...DIGEST, stuck: [{ ...STUCK, refreshing: true }] }, ENV);
+  assert.match(running.html, /Refreshing now\./);
+  assert.doesNotMatch(running.html, /Refresh by/);
+  const two = buildEmail({ ...DIGEST, stuck: [STUCK, { ...STUCK, key: "a/b#2", slug: "a__b__2", refresh_by: null }] }, ENV);
+  assert.match(two.subject, /^2 couldn't send · /);
+  for (const d of [DIGEST, { ...DIGEST, stuck: [] }]) {
+    const none = buildEmail(d, ENV);
+    assert.doesNotMatch(none.html, /Couldn't send/);
+    assert.doesNotMatch(none.text, /Couldn't send/);
+    assert.doesNotMatch(none.subject, /send/);
+  }
+  const only = { date: "2026-10-02", stuck: [STUCK], send: true };
+  assert.equal(buildEmail(only, ENV).subject, "Couldn't send manankharwar/fusioncore#161");
+  assert.equal(buildEmail({ ...only, stuck: [{ ...STUCK, refresh_by: "garbage" }] }, ENV).html.includes("Refresh by"), false);
 });
 
 test("the pairing queue shows in the body only, and only when it is not empty", () => {

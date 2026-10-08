@@ -15,6 +15,7 @@ familiar_languages = ["Kotlin", "Java"]
 max_candidates = 10          # how many go to the Claude step each night
 max_picks = 3                # Claude prepares at most this many a night (0 is fine)
 max_ready = 1                # ...of which at most this many fully prepared for one-tap submit
+max_unsent = 2               # no new ready item while this many prepared ones (new or failed) still wait to be sent
 max_open_prs = 3             # no new ready PR while this many of your PRs are open
 max_open_prs_per_repo = 1    # ...or while this many are open in that repo (briefings still fine)
 max_per_repo_wide = 2        # candidates per repo while exploring widely

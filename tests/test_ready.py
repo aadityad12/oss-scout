@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from scout import briefings, config, datarepo, digest, state as statemod, wip
 
 NOW = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
-SETTINGS = {"max_ready": 1, "max_open_prs": 3, "max_open_prs_per_repo": 1}
+SETTINGS = {"max_ready": 1, "max_open_prs": 3, "max_open_prs_per_repo": 1, "max_unsent": 1}
 
 
 def pr(repo, n, waiting=False, status="open"):
@@ -45,6 +45,21 @@ def test_wip_blocks_ready_while_one_is_unsubmitted():
                        SETTINGS)["ready_allowed"]
 
 
+def test_wip_allows_up_to_max_unsent_waiting_items():
+    two = {"o/r#1": {"status": "approved"}, "o/r#2": {"status": "ready"}}
+    w = wip.compute(st(suggestions={"o/r#1": {"status": "approved"}}), {**SETTINGS, "max_unsent": 2})
+    assert w["ready_allowed"] and w["reason"] == "ok"  # one failed item no longer blocks the night
+    w = wip.compute(st(suggestions=two), {**SETTINGS, "max_unsent": 2})
+    assert not w["ready_allowed"] and "2 ready but not submitted yet (max 2)" in w["reason"] and "o/r#1, o/r#2" in w["reason"]
+    # submitting counts as unsent, a snoozed item and finished ones do not
+    three = {"o/r#1": {"status": "submitting"}, "o/r#2": {"status": "pr_open"}, "o/r#3": {"status": "ready", "snoozed_until": "2999-01-01T00:00:00+00:00"}}
+    assert wip.compute(st(suggestions=three), {**SETTINGS, "max_unsent": 2}, NOW)["ready_allowed"]
+    assert not wip.compute(st(suggestions=three), SETTINGS, NOW)["ready_allowed"]
+    # the other rules still apply with room in the slots
+    assert not wip.compute(st([pr("a/b", 1, waiting=True)]), {**SETTINGS, "max_unsent": 2})["ready_allowed"]
+    assert not wip.compute(st([pr("a/a", 1), pr("b/b", 2), pr("c/c", 3)]), {**SETTINGS, "max_unsent": 2})["ready_allowed"]
+
+
 def test_wip_blocks_repos_at_the_per_repo_cap():
     prs = [pr("a/a", 1), pr("a/a", 2), pr("b/b", 3), pr("c/c", 4, status="merged")]
     w = wip.compute(st(prs), {**SETTINGS, "max_open_prs_per_repo": 2})
@@ -62,6 +77,7 @@ def test_targets_toml_has_the_new_settings():
     cfg = config.load()
     assert (cfg.settings["max_ready"], cfg.settings["max_open_prs_per_repo"],
             cfg.settings["max_open_prs"], cfg.settings["max_picks"]) == (1, 1, 3, 3)
+    assert cfg.settings["max_unsent"] == 2
     assert cfg.submit["token_rotated"]
 
 

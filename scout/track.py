@@ -10,6 +10,9 @@ suggestions, and moves each suggestion along:
                                                      and onwards)
   ready | approved | submitting -> posted   (comment-only items, once posted)
   ready -> skipped | taken                   (stale or gone; approved items are never skipped)
+  approved -> suggested                      (a failed send whose `refresh_by` date passed with
+                                              no rebuild in flight: a plain briefing again)
+  suggested | claimed | ready | approved -> taken   (someone else's open PR references the issue)
 """
 
 from __future__ import annotations
@@ -18,14 +21,17 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import briefings, state as statemod
-from .github import GitHub
+from . import briefings, refresh, state as statemod
+from .github import GitHub, NotFound, RateLimited
 from .score import MAINTAINER, _days, parse_ts
 
 MAX_EXTRA_DRAFTS = 3  # Claude runs started by a review alert, per UTC day
 PENDING = {"ready", "approved", "submitting"}  # prepared, not yet a PR or a posted comment
 ACTIVE = {"suggested", "claimed", "pr_open", "waiting_on_you"} | PENDING
 MAX_REVIEW_COMMENTS = 10
+RIVAL_CHECKED = {"suggested", "claimed", "ready", "approved"}  # not "submitting": that one is on its way
+TIMELINE_TTL = 3 * 3600
+TIMELINE_PAGES = 3
 
 
 def ladder(merged: int, maintainer: bool) -> str:
@@ -140,6 +146,45 @@ def _mentions(pr: dict, repo: str, number: int) -> bool:
                 or f"github.com/{repo}/issues/{number}" in text)
 
 
+def competing_pr(get, repo: str, number: int, login: str) -> str | None:
+    """URL of an open PR in `repo`, by someone other than `login`, that the issue's timeline shows referencing it.
+
+    `get(path)` reads one REST path. This is best effort: a timeline that can't be read
+    says nothing (only a rate limit is passed on).
+    """
+    for page in range(1, TIMELINE_PAGES + 1):
+        try:
+            events = get(f"repos/{repo}/issues/{number}/timeline?per_page=100&page={page}") or []
+        except RateLimited:
+            raise
+        except Exception:
+            return None
+        for ev in events:
+            src = (ev.get("source") or {}).get("issue") or {}
+            who = src.get("user") or {}
+            if (ev.get("event") == "cross-referenced" and src.get("pull_request") and src.get("state") == "open"
+                    and f"github.com/{repo}/pull/".lower() in str(src.get("html_url")).lower()
+                    and who.get("type") != "Bot" and str(who.get("login", "")).lower() != login.lower()):
+                return src["html_url"]
+        if len(events) < 100:
+            break
+    return None
+
+
+def stale_failure(s: dict, now: datetime) -> bool:
+    """A failed send whose draft is past its refresh-by date and has no rebuild on the way."""
+    try:
+        due = datetime.fromisoformat(str((s.get("failure") or {}).get("refresh_by"))).date()
+    except ValueError:
+        return False
+    return s.get("status") == "approved" and now.date() > due and not refresh.pending(s, now)
+
+
+def pending_sends(state: dict) -> list[str]:
+    """Approved items whose refresh answered "same fix" after the last failure, and should be sent now."""
+    return sorted(k for k, s in state.get("suggestions", {}).items() if refresh.sendable_after_refresh(s))
+
+
 def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_days: int,
                        now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
@@ -151,7 +196,12 @@ def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_
         repo, number = s["repo"], s["number"]
         pr_kind = s.get("kind", "pr") == "pr"
         linked = [p for p in contributions["prs"] if p["repo"] == repo and _mentions(p, repo, number)]
-        if linked and pr_kind:
+        issue = None  # read at most once per item
+        if stale_failure(s, now):
+            s["status"] = "suggested"
+            s["demoted_reason"] = "The draft went stale after a failed send, so it is a briefing for your laptop now."
+            s.pop("send_after_refresh", None)
+        elif linked and pr_kind:
             pr = max(linked, key=lambda p: p["created_at"])
             s["pr_url"] = pr["url"]
             s["status"] = {"merged": "merged", "closed": "closed"}.get(
@@ -168,6 +218,16 @@ def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_
                 s["status"] = "taken"
             elif _days(parse_ts(s["suggested_at"]), now) > skip_after_days:
                 s["status"] = "skipped"
+        if pr_kind and s["status"] in RIVAL_CHECKED:
+            # only once the cheap issue check passes: the timeline is one more call per item
+            try:
+                issue = issue or gh.get(f"repos/{repo}/issues/{number}", ttl=3 * 3600)
+            except NotFound:
+                issue = {"state": "closed"}
+            if issue.get("state") != "closed" and not issue.get("assignees"):
+                rival = competing_pr(lambda p: gh.get(p, ttl=TIMELINE_TTL), repo, number, contributions.get("login", ""))
+                if rival:
+                    s["status"], s["taken_by"] = "taken", rival
         if s["status"] != old:
             s.setdefault("history", []).append({"at": now.isoformat(timespec="seconds"),
                                                 "from": old, "to": s["status"]})

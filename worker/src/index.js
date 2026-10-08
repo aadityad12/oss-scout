@@ -6,8 +6,8 @@
 // and emails when a reviewer has replied. Cloudflare Access sits in front; this code
 // checks the Access token again on every request.
 
-export const ACTIONS = ["submit", "post", "followup", "approve", "later", "skip", "prepare", "pair", "unpair", "feature", "unfeature", "summary"];
-const NO_TEXT_ACTIONS = ["prepare", "pair", "unpair", "feature", "unfeature"]; // these ignore title and body
+export const ACTIONS = ["submit", "post", "followup", "approve", "later", "skip", "prepare", "pair", "unpair", "feature", "unfeature", "summary", "refresh"];
+const NO_TEXT_ACTIONS = ["prepare", "pair", "unpair", "feature", "unfeature", "refresh"]; // these ignore title and body
 export const MAX_SUMMARY = 200; // the impact line of a PR
 export const KEY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[0-9]+$/;
 export const MAX_TITLE = 256;
@@ -228,9 +228,18 @@ const linked = (env, slug, inner) => (slug ? `<a href="${esc(deepLink(env, slug)
 const openButton = (env) =>
   `<p style="margin:24px 0"><a href="${esc(env.DASHBOARD_URL)}" style="display:inline-block;background:#1e6b5a;color:#fff;text-decoration:none;font-weight:600;font-size:18px;padding:14px 26px;border-radius:10px">Open the dashboard</a></p>`;
 
+// "2026-10-12" as "Oct 12", read as a plain date so the timezone can't move it
+const shortDate = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso ?? ""));
+  return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : "";
+};
+
 export function buildEmail(d, env) {
   const ready = d.ready || [], waiting = d.waiting_on_you || [], fresh = d.new_briefings || [], pairing = d.pairing || [];
+  const stuck = d.stuck || [];
   const parts = [];
+  if (stuck.length === 1) parts.push(`Couldn't send ${stuck[0].key}`);
+  else if (stuck.length) parts.push(`${stuck.length} couldn't send`);
   const late = waiting.some((w) => w.overdue) ? "overdue" : "needed";
   if (waiting.length === 1) parts.push(`Reply ${late} on ${waiting[0].key}`);
   else if (waiting.length) parts.push(`${waiting.length} replies ${late}`);
@@ -242,8 +251,13 @@ export function buildEmail(d, env) {
   const list = (title, items, line) =>
     items.length ? `<h2 style="font-size:16px;margin:20px 0 6px">${title}</h2><ul style="padding-left:20px;margin:0">${items.map((i) => `<li style="margin:4px 0">${line(i)}</li>`).join("")}</ul>` : "";
   const titled = (i) => linked(env, i.slug, `${esc(i.title)} <span style="color:#5b6964">${esc(i.key)}</span>`);
+  const when = (i) => (i.refreshing ? "Refreshing now." : shortDate(i.refresh_by) ? `Refresh by ${shortDate(i.refresh_by)}.` : "");
+  const stuckList = stuck.length
+    ? `<h2 style="font-size:16px;margin:20px 0 6px;color:#cf222e">Couldn't send</h2>${stuck.map((i) => `<div style="margin:0 0 12px">${linked(env, i.slug, `<b>${esc(i.plain)}</b>`)}${i.why ? `<br>${esc(i.why)}` : ""}${when(i) ? `<br><b>${esc(when(i))}</b>` : ""}<br><span style="color:#5b6964">${esc(i.title)} ${esc(i.key)}</span></div>`).join("")}`
+    : "";
   const html = `<div style="font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#16201d;max-width:560px">
 <h1 style="font-size:20px;margin:0 0 8px">OSS Scout · ${esc(d.date)}</h1>
+${stuckList}
 ${d.token_warning ? `<p style="background:#fff1e0;padding:10px 12px;border-radius:8px"><b>Your GitHub token is ${esc(d.token_age_days)} days old.</b> Rotate it soon: submitting stops when it expires.</p>` : ""}
 ${list("Ready for one tap", ready, titled)}
 ${list("Waiting on you", waiting, (w) => `${linked(env, w.slug, esc(w.key))}${w.overdue ? ' <b style="color:#cf222e">overdue</b>' : ""}`)}
@@ -253,6 +267,8 @@ ${openButton(env)}
 </div>`;
   const plain = [
     `OSS Scout ${d.date}`,
+    ...(stuck.length ? ["Couldn't send:"] : []),
+    ...stuck.flatMap((i) => [`${i.plain}${i.why ? ` ${i.why}` : ""}${when(i) ? ` ${when(i)}` : ""} (${i.key})`]),
     d.token_warning ? `Your GitHub token is ${d.token_age_days} days old. Rotate it soon.` : "",
     ...ready.map((i) => `Ready: ${i.title} (${i.key})`),
     ...waiting.map((w) => `Waiting on you: ${w.key}${w.overdue ? " (overdue)" : ""}`),
