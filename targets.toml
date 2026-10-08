@@ -31,7 +31,7 @@ wide_phase_until = "2026-10-18"
 [submit]
 # Date the GitHub token used to submit approved work was created. Rotate the
 # classic PAT every 90 days and update this; the digest warns after 80.
-token_rotated = "2026-10-01"
+token_rotated = "2026-10-07"
 
 [discovery]
 enabled = true
