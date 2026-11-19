@@ -22,6 +22,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import fields
+
 REQUIRED = {
     "key": str, "repo": str, "number": int, "title": str, "url": str,
     "summary": str,            # the issue in plain English
@@ -51,7 +53,11 @@ LEGACY_MODES = {"guide": "pair"}  # the old "no code from Claude" mode, read as 
 # pair / own briefings may carry these; each is a list of strings
 PAIR_FIELDS = ("fix_plan", "code_locations", "explain_questions", "pr_facts", "comment_facts")
 # optional plain-language fields (see plain.py; older briefings fall back without them):
-# plain_problem is one sentence for a non-expert, files_explained is ["path: one plain line", ...]
+# plain_problem is one sentence for a non-expert, files_explained is ["path: one plain line", ...],
+# field is {"id": <fields.FIELDS key>, "also"?: <second id>, "why": one plain sentence},
+# project_intro is 2-3 plain sentences (what the project is, who uses it, who backs it),
+# plan_steps is 1-6 short plain strings: what we're going to do, in order
+MAX_PLAN_STEPS = 6
 KINDS = {"pr", "repro", "triage", "review"}
 FOLLOWUP_KINDS = {"small", "discuss"}
 PR_FIELDS = ("title", "body", "branch", "base")
@@ -118,6 +124,29 @@ def _plain_problems(b: dict) -> list[str]:
     fe = b.get("files_explained")
     if "files_explained" in b and not (isinstance(fe, list) and all(isinstance(x, str) and x.strip() for x in fe)):
         problems.append("files_explained should be a list of strings")
+    problems += _field_problems(b)
+    if "project_intro" in b and not (isinstance(b["project_intro"], str) and b["project_intro"].strip()):
+        problems.append("project_intro should be a non-empty string")
+    steps = b.get("plan_steps")
+    if "plan_steps" in b and not (isinstance(steps, list) and 1 <= len(steps) <= MAX_PLAN_STEPS
+                                  and all(isinstance(x, str) and x.strip() for x in steps)):
+        problems.append(f"plan_steps should be a list of 1-{MAX_PLAN_STEPS} non-empty strings")
+    return problems
+
+
+def _field_problems(b: dict) -> list[str]:
+    if "field" not in b:
+        return []
+    f = b["field"]
+    if not isinstance(f, dict):
+        return ["field should be {id, also?, why}"]
+    problems = []
+    if not fields.valid(f.get("id")):
+        problems.append(f"field.id should be one of {sorted(fields.FIELDS)}")
+    if f.get("also") is not None and not fields.valid(f["also"]):
+        problems.append(f"field.also should be one of {sorted(fields.FIELDS)}")
+    if not (isinstance(f.get("why"), str) and f["why"].strip()):
+        problems.append("field.why should be a non-empty string")
     return problems
 
 
