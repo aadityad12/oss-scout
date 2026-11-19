@@ -157,6 +157,7 @@ def measure(gh: GitHub, repo: str, now: datetime | None = None) -> dict:
         "homepage": meta.get("homepage"),
         "archived": meta.get("archived", False),
         "description": meta.get("description"),
+        "topics": meta.get("topics") or [],  # lets the scanner guess a field for discovered repos
         "outside_prs_sampled": len(closed),
         "merge_rate": merge_rate,
         "merges_elsewhere": merges_elsewhere,
