@@ -62,7 +62,7 @@ def field_hint(cfg, issue: dict, info: dict) -> dict:
 
 
 def pick_candidates(gh, cfg, scored: list[dict], repos: dict[str, dict],
-                    dropped: dict[str, int]) -> tuple[list[dict], int]:
+                    dropped: dict[str, int], now: datetime | None = None) -> tuple[list[dict], int]:
     """Walk the ranked issues, check each one's timeline, keep the free ones.
 
     Timeline checks are one API call per issue (cached 3h), so they stop at
@@ -87,7 +87,7 @@ def pick_candidates(gh, cfg, scored: list[dict], repos: dict[str, dict],
         if per_repo.get(issue["repo"], 0) >= cap:
             continue
         checked += 1
-        act = filters.activity(gh, issue["repo"], issue["number"], s.get("claim_window_days", 21),
+        act = filters.activity(gh, issue["repo"], issue["number"], s.get("claim_window_days", 21), now=now,
                                stale_pr_days=s.get("stale_pr_days", 90))
         others = [c for c in act["recent_claims"] if c["by"] != cfg.login]
         if act["linked_open_prs"]:
