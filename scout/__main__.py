@@ -130,7 +130,9 @@ def cmd_run(args, cfg, data, gh) -> None:
     repos: dict[str, dict] = {}
     budget = [s.get("remeasure_per_run", 4)]
     dropped: dict[str, int] = {}
-    for repo in sorted({i["repo"] for i in issues}):
+    new_budget = [s.get("measure_new_per_run", 8)]
+    # tier repos first, so the hand-picked projects get measured before discovered ones
+    for repo in sorted({i["repo"] for i in issues}, key=lambda r: (r not in tier_repos, r)):
         if repo not in tier_repos:
             meta = gh.repo(repo) or {}
             owner_type = (meta.get("owner") or {}).get("type")
@@ -139,9 +141,9 @@ def cmd_run(args, cfg, data, gh) -> None:
                 repos[repo] = {"archived": meta.get("archived"), "stars": meta.get("stargazers_count"),
                                "owner_type": owner_type}
                 continue
-        if repo not in st["repos"] or budget[0] > 0:
+        if (repo not in st["repos"] and new_budget[0] > 0) or (repo in st["repos"] and budget[0] > 0):
             log(f"measuring {repo}")
-        repos[repo] = score.get(gh, repo, st["repos"], s.get("repo_score_ttl_days", 7), budget)
+        repos[repo] = score.get(gh, repo, st["repos"], s.get("repo_score_ttl_days", 7), budget, new_budget)
 
     scored = []
     for issue in issues:

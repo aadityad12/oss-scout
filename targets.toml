@@ -27,6 +27,7 @@ max_per_repo_wide = 2        # candidates per repo while exploring widely
 max_per_repo = 4             # ...and after home projects are chosen
 repo_score_ttl_days = 7      # re-measure repo friendliness weekly
 remeasure_per_run = 4        # ...a few stale repos per night, so runs stay short
+measure_new_per_run = 8      # ...and at most this many never-measured repos (the rest wait a night)
 issue_max_age_days = 365     # ignore issues older than this
 claim_window_days = 21       # "I'll take this" comments newer than this = claimed
 # max_checked = 120          # most issues whose timeline is read per run (default: max_candidates * 12; cached 3h)

@@ -177,12 +177,27 @@ def measure(gh: GitHub, repo: str, now: datetime | None = None) -> dict:
     }
 
 
-def get(gh: GitHub, repo: str, cache: dict, ttl_days: float, budget: list[int] | None = None) -> dict:
+def provisional(gh: GitHub, repo: str) -> dict:
+    """A stand-in for a repo that hasn't been measured yet: its basic facts (one cached call)
+    and a neutral friendliness. Not stored, so a later night measures it properly."""
+    meta = gh.repo(repo) or {}
+    return {"repo": repo, "provisional": True, "friendliness": 0.5, "confident": False,
+            "stars": meta.get("stargazers_count"), "language": meta.get("language"),
+            "owner_type": (meta.get("owner") or {}).get("type"), "archived": meta.get("archived", False),
+            "description": meta.get("description"), "homepage": meta.get("homepage"),
+            "topics": meta.get("topics") or [], "ai_policy": "none", "policy_files": []}
+
+
+def get(gh: GitHub, repo: str, cache: dict, ttl_days: float, budget: list[int] | None = None,
+        new_budget: list[int] | None = None) -> dict:
     """Return a cached measurement if fresh, else re-measure and store in `cache`.
 
     `budget` is a one-element list counting how many stale repos may still be
     re-measured this run; past it, stale numbers are reused so the nightly run
     stays short and the weekly refresh spreads across several nights.
+    `new_budget` does the same for repos never measured before (about 35 API calls
+    each): past it they get a provisional entry. Adding many projects at once would
+    otherwise blow the Actions token's 1,000 requests an hour in a single night.
     """
     hit = cache.get(repo)
     if hit and time.time() - hit.get("measured_at", 0) < ttl_days * 86400:
@@ -191,5 +206,9 @@ def get(gh: GitHub, repo: str, cache: dict, ttl_days: float, budget: list[int] |
         if budget[0] <= 0:
             return hit
         budget[0] -= 1
+    if not hit and new_budget is not None:
+        if new_budget[0] <= 0:
+            return provisional(gh, repo)
+        new_budget[0] -= 1
     cache[repo] = measure(gh, repo)
     return cache[repo]

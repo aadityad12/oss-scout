@@ -69,7 +69,8 @@ def score_issue(issue: dict, repo: dict, cfg: Config, state: dict,
         "ai_policy": POLICY_MULT.get(repo.get("ai_policy", "none"), 1.0),
         "busy_thread": 0.7 if issue.get("comments", 0) > 15 else 1.0,
         "home": home_multiplier(issue["repo"], state, cfg),
-        "size": size_multiplier(repo.get("stars")),
+        # hand-picked tier projects are never marked down for size, only discovered ones
+        "size": max(1.0, size_multiplier(repo.get("stars"))) if tier else size_multiplier(repo.get("stars")),
         "company": company_multiplier(repo.get("owner_type")),
     }
     total = base

@@ -109,7 +109,7 @@ def test_require_org_can_be_switched_off(cfg):
     (150000, 1.1)])
 def test_size_multiplier(cfg, stars, mult):
     repo = {"friendliness": 0.7, "stars": stars}
-    got = rank.score_issue(issue_for("duckdb/duckdb"), repo, cfg, {}, now=NOW)
+    got = rank.score_issue(issue_for("some/discovered"), repo, cfg, {}, now=NOW)  # tier repos are never marked down
     assert got["multipliers"]["size"] == mult
 
 
@@ -244,7 +244,7 @@ def test_run_skips_personal_discovered_repos_and_writes_the_new_fields(cfg, monk
     gh = GitHub(transport=Fake({"repos/corp/big/issues/1/timeline": []}))
     gh.repo = lambda name, ttl=0: metas.get(name)
     measured = []
-    monkeypatch.setattr(score, "get", lambda gh, repo, cache, ttl, budget:
+    monkeypatch.setattr(score, "get", lambda gh, repo, cache, ttl, budget, new_budget=None:
                         measured.append(repo) or {"friendliness": 0.7, "stars": 9000, "owner_type": "Organization",
                                                   "description": "Big thing", "homepage": "https://big.dev",
                                                   "topics": ["kubernetes"]})
@@ -263,3 +263,23 @@ def test_run_skips_personal_discovered_repos_and_writes_the_new_fields(cfg, monk
     assert cand["repo_info"]["homepage"] == "https://big.dev" and cand["repo_info"]["topics"] == ["kubernetes"]
     run = json.loads((tmp_path / "state.json").read_text())["runs"][-1]
     assert run["dropped"] == {"not an organization": 1} and run["unchecked"] == 0
+
+
+def test_new_repos_past_the_budget_get_a_provisional_entry_and_are_not_cached():
+    from scout import score
+    class FakeGH:
+        def repo(self, name):
+            return {"stargazers_count": 17000, "owner": {"type": "Organization"}, "topics": ["rtos"]}
+    cache = {}
+    got = score.get(FakeGH(), "zephyrproject-rtos/zephyr", cache, 7, [4], [0])
+    assert got["provisional"] and got["stars"] == 17000 and got["owner_type"] == "Organization"
+    assert "zephyrproject-rtos/zephyr" not in cache
+
+
+def test_tier_repos_are_not_marked_down_for_size():
+    from scout import config, rank
+    cfg = config.load()
+    tier_repo = cfg.tiers[0].repos[0]
+    issue = {"repo": tier_repo, "created_at": "2026-11-01T00:00:00Z", "label_groups": ["beginner"], "comments": 0}
+    out = rank.score_issue(issue, {"stars": 136, "owner_type": "Organization"}, cfg, {})
+    assert out["multipliers"]["size"] == 1.0
