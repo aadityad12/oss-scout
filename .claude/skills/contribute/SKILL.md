@@ -63,7 +63,9 @@ only after they approve the exact content.
 ## Steps (all modes)
 
 1. **Brief the owner in under 10 lines.** Load the briefing (and `draft.patch` in draft
-   mode). Cover what's broken in plain words, where it lives, the fix in one sentence,
+   mode). Open with the project in one plain line (`project_intro`) and the field tag
+   with its one-line reason (`field`), then cover what's broken in plain words, where it
+   lives, the plan (`plan_steps`), the fix in one sentence,
    time estimate (include the build for big C/C++ projects), confidence and risks, and the
    policy notes: AI rule, CLA or DCO, anything unusual. Ask: go, skip, or later. On skip
    or later, stop.

@@ -149,10 +149,19 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
      `ready_allowed` is false, there is no ready item tonight; say why in `note`.
    - **Briefings** for up to `max_picks` in total (so normally 1 ready plus 2
      briefings), not ready. Blocked repos are fine for briefings.
-   - Judge: can a strong C++/Python developer understand the fix in under an hour? Is
-     it well-specified, and will a maintainer likely accept an outside fix? Prefer
-     variety across projects while `wide_phase_until` (`targets.toml`) is in the
-     future. Skip anything needing a design decision, a huge refactor, or hardware.
+   - Judge: can a strong C/C++ developer (who reads Python) understand the fix in under
+     an hour? Is it well-specified, and will a maintainer likely accept an outside fix?
+     The owner wants **large, popular projects run by companies or foundations, with
+     company-employed reviewers** (Zephyr, DuckDB, PyTorch, Envoy and the like): prefer
+     those over small or one-person projects even when the small one looks easier.
+     Prefer variety across projects and fields (`field_hint`) while `wide_phase_until`
+     (`targets.toml`) is in the future. Skip anything needing a design decision or a
+     huge refactor. Embedded issues that need real hardware are fine for a `pair`
+     briefing only if the bug can be shown on an emulator or host target (Zephyr's
+     `native_sim` or `qemu_*`); never mark them `ready` unless that ran.
+   - `activity.stale_linked_prs` lists open PRs linked to the issue that nobody has
+     touched in months. They don't block, but say so in `why` and in `comment_facts` /
+     `claim_comment` (ask whether the old PR is abandoned before starting).
 6. **For each pick** (keep usage low: the scanner already did the searching):
    a. Read the project's CONTRIBUTING / AI-policy files in full (`repo_info.policy_files`).
       Note the CLA, DCO sign-off, commit-message, test and disclosure rules.
@@ -184,6 +193,9 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
      "post_target": "URL of the issue or PR to comment on (ready repro/triage/review only)",
      "models_used": [{"model": "sonnet", "did": "triage, draft, briefing"}, {"model": "opus", "did": "root cause"}],
      "headline": "A short plain name for this item, at most about 70 characters, no file or function names: it is the bold heading in the email and on the card. E.g. 'Add tests to the robot-config converter and stop it crashing on empty files'. Optional.",
+     "field": {"id": "one id from the field list below", "also": "optional second id", "why": "ONE plain sentence on why THIS issue belongs to that field, for someone who isn't an engineer. E.g. 'The bug is in the code that talks to the radio chip on small battery-powered boards, which is classic embedded work.'"},
+     "project_intro": "2-3 plain sentences: what the project is, who uses it, and which company or foundation backs it and reviews the code. No jargon. E.g. 'Zephyr is a small operating system for chips inside devices like fitness trackers and smart plugs. It is run by the Linux Foundation, and engineers from Nordic, Intel and NXP review the changes.'",
+     "plan_steps": ["2-5 short plain steps, in order, of what we are going to do. E.g. 'Reproduce the crash on the emulator', 'Make the driver check the buffer size before copying', 'Add a test that sends an oversized packet', 'Open the PR and link the issue'"],
      "plain_problem": "ONE sentence, no file names, function names or code, for someone who doesn't know the project: what is broken and who it hurts. E.g. 'A script that converts robot configs into FusionCore configs has no tests, and it crashes with a confusing error on empty files.'",
      "summary": "The issue in 2-4 plain-English sentences.",
      "why": "Why this issue, for this person, now. Mention the repo's merge stats.",
@@ -209,6 +221,19 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
    no file names, function names, error codes or backticks. It is required for every
    pick. The dashboard works out "what you'd send" and "how long it takes" itself from
    the patch and `time_estimate`, so keep `time_estimate` honest (include the build).
+   `field`, `project_intro` and `plan_steps` are required for every pick too; they sit
+   right under the heading in the email, so keep them as simple as `plain_problem`.
+   `field.id` is one of: `embedded` (Embedded & firmware), `systems` (Systems & OS),
+   `databases` (Databases & data), `ai-ml` (AI / ML engineering), `ml-research` (AI / ML
+   research), `cloud` (Cloud & infrastructure), `security` (Security & crypto),
+   `networking` (Networking & protocols), `devtools` (Developer tools), `data-eng` (Data
+   engineering), `mobile`, `web` (Web & backend), `graphics` (Graphics & robotics).
+   Start from the candidate's `field_hint` (a guess from the project) but choose for the
+   *issue*: a TLS bug inside an RTOS is `embedded` with `also: security`. Use
+   `ml-research` only for research code (experiments, papers), not for serving models.
+   Base `project_intro` on `repo_info.description`, `homepage` and the README; name the
+   backing company or foundation only if the repo says so (a MAINTAINERS file, the org
+   page, the README), never from guesswork.
    For a ready PR also write `files_explained`: every file in `draft.patch`, one line
    each, in plain words (code words are fine here, jargon isn't).
 
