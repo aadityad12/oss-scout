@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import briefings, plain, refresh
+from . import briefings, fields, plain, refresh
 from .config import Config
 from .score import parse_ts
 from .wip import snoozed
@@ -51,6 +52,56 @@ def lines_of(s: dict, b: dict | None, now: datetime) -> dict:
             **plain.lines({**s, "refresh_pending": refresh.pending(s, now)}, b or {})}
 
 
+MAX_PLAN_STEPS = 5
+
+
+def stars_text(n) -> str:
+    """43210 as '43k', 4300 as '4.3k', 1500000 as '1.5M'; '' when it isn't a positive number."""
+    if isinstance(n, bool) or not isinstance(n, (int, float)) or n <= 0:
+        return ""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}".removesuffix(".0") + "M"
+    if n >= 10_000:
+        return f"{round(n / 1000)}k"
+    if n >= 1_000:
+        return f"{n / 1000:.1f}".removesuffix(".0") + "k"
+    return str(round(n))
+
+
+def intro_fallback(repo: str, info: dict | None) -> str:
+    """What the project is, from state alone: its GitHub description and its star count ('' if unknown)."""
+    info = info or {}
+    desc = re.sub(r":[a-z0-9_+-]+:", "", str(info.get("description") or ""))
+    desc = re.sub(r"\s+", " ", desc).strip()
+    if desc and desc[-1] not in ".!?":
+        desc += "."
+    name = repo.split("/")[-1]
+    named = r"[-_ .]?".join(re.escape(w) for w in re.split(r"[-_.]", name) if w)
+    if desc and named and not re.search(rf"(?<![A-Za-z0-9]){named}(?![A-Za-z0-9])", desc, re.I):
+        desc = f"{name}: {desc}"  # a description that doesn't say whose it is gets the project's name in front
+    stars = stars_text(info.get("stars"))
+    return " ".join(x for x in (desc, f"About {stars} stars on GitHub." if stars else "") if x)
+
+
+def extras_of(cfg: Config, st: dict, key: str, b: dict | None) -> dict:
+    """What every item shows beyond the three lines: its field tag, an intro to the project, and the plan.
+
+    The briefing's own `field`, `project_intro` and `plan_steps` win; without them the field is the
+    scanner's hint (per-repo override, tier, topics), the intro is built from state, the plan is empty.
+    """
+    b = b or {}
+    repo = key.split("#")[0]
+    info = st.get("repos", {}).get(repo, {})
+    tier = cfg.tier_of(repo)
+    fallback = fields.hint(repo, tier.field if tier else None, cfg.repo_fields, info.get("topics"), info.get("description"))
+    intro = b.get("project_intro")
+    steps = b.get("plan_steps")
+    return {"field": fields.resolve(b.get("field"), fallback),
+            "project_intro": intro.strip() if isinstance(intro, str) and intro.strip() else intro_fallback(repo, info),
+            "plan_steps": [x.strip() for x in steps if isinstance(x, str) and x.strip()][:MAX_PLAN_STEPS]
+            if isinstance(steps, list) else []}
+
+
 def stuck(st: dict, now: datetime, bs: dict | None = None) -> list[dict]:
     """Items whose last send failed, in plain words. A snoozed item is left out."""
     bs = bs or {}
@@ -78,13 +129,13 @@ def build(cfg: Config, data: Path, st: dict, now: datetime | None = None) -> dic
                 "slug": briefings.slug(key)}
 
     def with_lines(key: str) -> dict:
-        return {**item(key), **lines_of(sugg[key], bs.get(key), now)}
+        return {**item(key), **lines_of(sugg[key], bs.get(key), now), **extras_of(cfg, st, key, bs.get(key))}
 
     picks = data / "picks" / f"{today}.json"
     picked = set(json.loads(picks.read_text()).get("picked", [])) if picks.exists() else set()
     fresh = sorted(k for k, s in sugg.items() if s.get("status") == "suggested"
                    and (k in picked or str(s.get("suggested_at", "")).startswith(today)))
-    stuck_items = stuck(st, now, bs)
+    stuck_items = [{**i, **extras_of(cfg, st, i["key"], bs.get(i["key"]))} for i in stuck(st, now, bs)]
     stuck_keys = {i["key"] for i in stuck_items}  # shown under "couldn't send", not again as ready
     ready = sorted(k for k, s in sugg.items() if s.get("status") == "ready" and not snoozed(s, now)
                    and k not in stuck_keys)
@@ -104,13 +155,14 @@ def build(cfg: Config, data: Path, st: dict, now: datetime | None = None) -> dic
         "stuck": stuck_items,
         "ready": [with_lines(k) for k in ready],
         "waiting_on_you": waiting,
-        "new_briefings": [item(k) for k in fresh],
+        "new_briefings": [item(k) for k in fresh],  # kept as it was; new_today carries the same keys in full
+        "new_today": [with_lines(k) for k in fresh],
         "pairing": [{"key": k, "title": sugg[k].get("title", ""), "slug": briefings.slug(k)}
                     for k in sorted(sugg) if sugg[k].get("pairing")
                     and sugg[k].get("status") in ("suggested", "claimed", "ready", "approved")],
         "weekly": [with_lines(k) for k in weekly],  # briefings for the Saturday laptop email
         "token_age_days": age,
         "token_warning": warn,
-        # laptop briefings only go in the Saturday email; an expiring token breaks submits
-        "send": bool(stuck_items or ready or waiting or warn),
+        # today's new briefings go in the daily email; an expiring token breaks submits
+        "send": bool(stuck_items or ready or waiting or fresh or warn),
     }

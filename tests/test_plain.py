@@ -169,10 +169,13 @@ def test_digest_items_carry_the_three_lines_and_the_weekly_list(tmp_path):
     assert d["weekly"][0]["sending"].startswith("Nothing prepared yet")
 
 
-def test_laptop_briefings_alone_do_not_trigger_the_daily_email(tmp_path):
+def test_a_briefing_from_today_triggers_the_daily_email_but_an_older_one_does_not(tmp_path):
     sugg = {"o/r#2": {"status": "suggested", "title": "B", "suggested_at": "2026-10-10T01:00:00+00:00", "pairing": True}}
     d = digest.build(config.load(), tmp_path, {"suggestions": sugg, "contributions": {"prs": []}}, NOW)
-    assert d["send"] is False and len(d["new_briefings"]) == 1 and len(d["weekly"]) == 1
+    assert d["send"] is True and len(d["new_briefings"]) == 1 and len(d["new_today"]) == 1 and len(d["weekly"]) == 1
+    sugg["o/r#2"]["suggested_at"] = "2026-10-08T01:00:00+00:00"
+    d = digest.build(config.load(), tmp_path, {"suggestions": sugg, "contributions": {"prs": []}}, NOW)
+    assert d["send"] is False and d["new_today"] == [] and len(d["weekly"]) == 1
 
 
 def test_waiting_items_say_what_the_reply_is_about(tmp_path):

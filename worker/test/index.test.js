@@ -708,3 +708,127 @@ test("alert email escapes everything and encodes the slug", () => {
   const noSlug = buildAlertEmail([{ ...ALERT, slug: undefined }], ENV);
   assert.doesNotMatch(noSlug.html, /#undefined/);
 });
+
+// -- field tag, project intro, plan, and today's new briefings ----------------------------------
+
+const FIELD = { id: "embedded", label: "Embedded & firmware", also: "security", also_label: "Security & crypto",
+  why: "It fixes how a <tiny> chip reads its sensor." };
+const EXTRAS = {
+  field: FIELD,
+  project_intro: "Zephyr is a small operating system for tiny devices. Makers of sensors & wearables use it. The Linux Foundation backs it.",
+  plan_steps: ["Read the bug report", "Change the <one> file", "Run the tests"],
+};
+const FRESH = { key: "zephyrproject-rtos/zephyr#1", slug: "zephyrproject-rtos__zephyr__1", title: "New <thing> broken", kind: "pr", ...LINES, ...EXTRAS };
+const hexesIn = (html) => [...html.matchAll(/style="([^"]*)"/g)].flatMap((m) => m[1].match(/#[0-9a-f]{3,8}\b/gi) || []);
+const NEUTRAL_HEXES = new Set(["#10121a", "#545869", "#dfe2ec", "#be2a2f", "#0000f2", "#0000e0", "#ffffff", "#fff", "#e8eaf2", "#fcebec"]);
+
+test("an item card shows the tag pill, then why, then the project, the three lines and the plan, then its button", () => {
+  const m = buildEmail({ ...DIGEST, ready: [{ ...DIGEST.ready[0], ...EXTRAS }] }, ENV);
+  const card = m.html.slice(m.html.indexOf("Fix &lt;b&gt;"), m.html.indexOf(">A maintainer replied</h2>"));
+  assert.match(card, /border-radius:999px[^>]*>Embedded &amp; firmware · Security &amp; crypto<\/span>/);
+  assert.match(card, /Why this field: It fixes how a &lt;tiny&gt; chip reads its sensor\./);
+  const at = (s) => card.indexOf(s);
+  assert.ok(at("o/r#1") < at("Embedded &amp;") && at("Embedded &amp;") < at("Why this field") && at("Why this field") < at(">About the project<")
+    && at(">About the project<") < at(">What's broken<") && at("Your part") < at(">What we'll do<") && at(">What we'll do<") < at("Review and send"));
+  assert.match(card, /Makers of sensors &amp; wearables/);
+  assert.match(card, /<ol[^>]*><li[^>]*>Read the bug report<\/li><li[^>]*>Change the &lt;one&gt; file<\/li><li[^>]*>Run the tests<\/li><\/ol>/);
+  assert.doesNotMatch(m.html, /<tiny>|<one>/);
+});
+
+test("a field without `also` shows just the one tag", () => {
+  const f = { ...FIELD, also: null, also_label: null };
+  const m = buildEmail({ ...DIGEST, ready: [{ ...DIGEST.ready[0], field: f }] }, ENV);
+  assert.match(m.html, />Embedded &amp; firmware<\/span>/);
+  assert.doesNotMatch(m.html, /Security &amp; crypto|· <\/span>/);
+});
+
+test("the tag is neutral: only the existing greys, ink, blue and red appear", () => {
+  const m = buildEmail({ ...DIGEST, stuck: [STUCK], ready: [{ ...DIGEST.ready[0], ...EXTRAS }], new_today: [FRESH] }, ENV);
+  assert.ok(hexesIn(m.html).length > 10);
+  const pill = m.html.match(/<span style="[^"]*border-radius:999px[^"]*">/)[0];
+  assert.match(pill, /background:#e8eaf2;color:#10121a/);
+  for (const hex of hexesIn(m.html)) assert.ok(NEUTRAL_HEXES.has(hex.toLowerCase()), hex);
+  const w = buildWeeklyEmail({ ...WEEKLY, weekly: [{ ...WEEKLY.weekly[0], ...EXTRAS }] }, ENV);
+  for (const hex of hexesIn(w.html)) assert.ok(NEUTRAL_HEXES.has(hex.toLowerCase()), hex);
+});
+
+test("parts without data are left out, and an item with none looks as before", () => {
+  const plainCard = buildEmail({ ...DIGEST, ready: [DIGEST.ready[0]] }, ENV);
+  for (const gone of ["Why this field", "About the project", "What we'll do", "border-radius:999px", "<ol"]) {
+    assert.ok(!plainCard.html.includes(gone) && !plainCard.text.includes(gone), gone);
+  }
+  const onlyField = buildEmail({ ...DIGEST, ready: [{ ...DIGEST.ready[0], field: { ...FIELD, why: "" } }] }, ENV);
+  assert.match(onlyField.html, /Embedded &amp; firmware/);
+  assert.doesNotMatch(onlyField.html, /Why this field/);
+  assert.doesNotMatch(onlyField.text, /Why this field/);
+  const junk = buildEmail({ ...DIGEST, ready: [{ ...DIGEST.ready[0], field: null, project_intro: "  ", plan_steps: ["", 3, null] }] }, ENV);
+  assert.doesNotMatch(junk.html + junk.text, /About the project|What we'll do|border-radius:999px/);
+  const noLabel = buildEmail({ ...DIGEST, ready: [{ ...DIGEST.ready[0], field: { id: "embedded", why: "w" }, plan_steps: "nope" }] }, ENV);
+  assert.doesNotMatch(noLabel.html + noLabel.text, /Why this field|What we'll do|border-radius:999px/);
+});
+
+test("the plain text has the same tag, why, intro and numbered plan, in the same order", () => {
+  const m = buildEmail({ ...DIGEST, ready: [{ ...DIGEST.ready[0], ...EXTRAS }] }, ENV);
+  assert.ok(m.text.includes([
+    "Fix <b>crash</b> & more", "o/r#1", "Embedded & firmware · Security & crypto", "Why this field: It fixes how a <tiny> chip reads its sensor.",
+    `About the project: ${EXTRAS.project_intro}`, `What's broken: ${LINES.problem}`, `You'd send: ${LINES.sending}`, `Your part: ${LINES.your_part}`,
+    "What we'll do:", "1. Read the bug report", "2. Change the <one> file", "3. Run the tests", "https://me.aadityad.dev/#o__r__1",
+  ].join("\n")));
+  assert.doesNotMatch(m.text, /<div|<span|<ol|&amp;|&#39;|&lt;/);
+});
+
+test("a stuck item shows the tag under its heading and before the red failure note", () => {
+  const m = buildEmail({ ...DIGEST, stuck: [{ ...STUCK, ...EXTRAS }] }, ENV);
+  const card = m.html.slice(m.html.indexOf("Add &lt;tests&gt;"), m.html.indexOf(">Ready to send</h2>"));
+  assert.ok(card.indexOf("Embedded &amp; firmware") < card.indexOf("Couldn&#39;t send: fusioncore") && card.indexOf("About the project") > card.indexOf("Refresh by"));
+  assert.match(m.text, /manankharwar\/fusioncore#161\nEmbedded & firmware · Security & crypto\nWhy this field: [^\n]+\nCouldn't send: fusioncore/);
+});
+
+test("New today comes after Ready to send and before A maintainer replied, with its own button", () => {
+  const m = buildEmail({ ...DIGEST, stuck: [STUCK], new_today: [FRESH] }, ENV);
+  const at = (s) => m.html.indexOf(s);
+  assert.ok(at(">Ready to send</h2>") < at(">New today</h2>") && at(">New today</h2>") < at(">A maintainer replied</h2>"));
+  const card = m.html.slice(at(">New today</h2>"), at(">A maintainer replied</h2>"));
+  assert.match(card, /New &lt;thing&gt; broken/);
+  assert.match(card, /Embedded &amp; firmware/);
+  assert.match(card, /href="https:\/\/me\.aadityad\.dev\/#zephyrproject-rtos__zephyr__1"[^>]*>Open the briefing<\/a>/);
+  assert.equal(m.html.split("#zephyrproject-rtos__zephyr__1").length - 1, 1);
+  const t = m.text;
+  assert.ok(t.indexOf("READY TO SEND") < t.indexOf("NEW TODAY") && t.indexOf("NEW TODAY") < t.indexOf("A MAINTAINER REPLIED"));
+  assert.ok(t.slice(t.indexOf("NEW TODAY")).includes("New <thing> broken\nzephyrproject-rtos/zephyr#1\nEmbedded & firmware"));
+  assert.ok(t.includes("https://me.aadityad.dev/#zephyrproject-rtos__zephyr__1"));
+});
+
+test("no New today section without new briefings, and the subject says how many are new", () => {
+  const one = { date: "2026-10-02", ready: [DIGEST.ready[0]], waiting_on_you: [], send: true };
+  for (const d of [one, { ...one, new_today: [] }]) {
+    const m = buildEmail(d, ENV);
+    assert.doesNotMatch(m.html, /New today/);
+    assert.doesNotMatch(m.text, /NEW TODAY/);
+    assert.equal(m.subject, "1 PR ready to send");
+  }
+  assert.equal(buildEmail({ ...one, new_today: [FRESH, { ...FRESH, key: "a/b#2", slug: "a__b__2" }] }, ENV).subject, "1 PR ready to send · 2 new to look at");
+  assert.equal(buildEmail({ ...one, ready: [], new_today: [FRESH] }, ENV).subject, "1 new to look at");
+  assert.equal(buildEmail({ ...DIGEST, new_today: [FRESH] }, ENV).subject,
+    "1 PR ready to send · 1 new to look at · Maintainers replied on 2 PRs · GitHub key needs replacing");
+});
+
+test("the Saturday email carries the same tag, intro and plan", () => {
+  const m = buildWeeklyEmail({ ...WEEKLY, weekly: [{ ...WEEKLY.weekly[0], ...EXTRAS }] }, ENV);
+  assert.match(m.html, /border-radius:999px[^>]*>Embedded &amp; firmware · Security &amp; crypto<\/span>/);
+  assert.match(m.html, /Why this field: It fixes how a &lt;tiny&gt; chip/);
+  assert.match(m.html, />About the project</);
+  assert.match(m.html, /<ol[^>]*><li[^>]*>Read the bug report/);
+  for (const needle of ["Embedded & firmware · Security & crypto", "Why this field: It fixes", "About the project: Zephyr is", "What we'll do:", "2. Change the <one> file"]) {
+    assert.ok(m.text.includes(needle), needle);
+  }
+});
+
+test("sendDigest sends a digest that only has new briefings", async () => {
+  const d = { date: "2026-10-02", ready: [], stuck: [], waiting_on_you: [], new_today: [FRESH], send: true };
+  const fetchFn = fetchMock({ "https://api.github.com/": Response.json(d), "https://api.resend.com/": Response.json({ id: "1" }) });
+  const out = await sendDigest(ENV, { fetchFn, now: NOW });
+  assert.deepEqual(out, { sent: true, subject: "1 new to look at" });
+  const mail = JSON.parse(resendCalls()[0].init.body);
+  assert.match(mail.html, /Open the briefing/);
+});

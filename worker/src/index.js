@@ -236,7 +236,7 @@ const shortDate = (iso) => {
 };
 
 // Email-safe inline styles: neutral text, one red for what went wrong, one blue for the buttons.
-const INK = "#10121a", MUTED = "#545869", LINE = "#dfe2ec", RED = "#be2a2f", BLUE = "#0000f2";
+const INK = "#10121a", MUTED = "#545869", LINE = "#dfe2ec", RED = "#be2a2f", BLUE = "#0000f2", PILL = "#e8eaf2";
 const WRAP = `font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:${INK};background:#ffffff;max-width:560px;padding:4px`;
 const h2 = (title, color = INK) => `<h2 style="font-size:17px;margin:28px 0 12px;color:${color}">${esc(title)}</h2>`;
 const noun = (items) => (items.every((i) => (i.kind || "pr") === "pr") ? "PR" : "item");
@@ -249,15 +249,44 @@ const lineRows = (i) =>
     .map(([k, label]) => `<div style="margin:8px 0 0"><div style="font-size:12px;color:${MUTED};text-transform:uppercase;letter-spacing:.04em">${label}</div><div>${esc(i[k])}</div></div>`)
     .join("");
 const lineText = (i) => LINES.filter(([k]) => i[k]).map(([k, label]) => `${label}: ${i[k]}`);
+
+// Which field the item counts toward (a small grey pill, never a colour per field), why, what the project is,
+// and what we'll do. Each part is left out when the digest didn't carry it.
+const str = (x) => (typeof x === "string" ? x.trim() : "");
+const fieldLabel = (i) => {
+  const f = i.field;
+  if (!f || typeof f !== "object" || !str(f.label)) return "";
+  return str(f.also_label) ? `${str(f.label)} · ${str(f.also_label)}` : str(f.label);
+};
+const fieldWhy = (i) => (fieldLabel(i) ? str(i.field.why) : "");
+const steps = (i) => (Array.isArray(i.plan_steps) ? i.plan_steps.map(str).filter(Boolean) : []);
+const SMALL_LABEL = `font-size:12px;color:${MUTED};text-transform:uppercase;letter-spacing:.04em`;
+const fieldRows = (i) =>
+  fieldLabel(i)
+    ? `<div style="margin:8px 0 0"><span style="display:inline-block;background:${PILL};color:${INK};font-size:13px;font-weight:600;line-height:1.3;padding:3px 10px;border-radius:999px">${esc(fieldLabel(i))}</span></div>${
+        fieldWhy(i) ? `<div style="margin:6px 0 0;font-size:14px;color:${MUTED}">Why this field: ${esc(fieldWhy(i))}</div>` : ""}`
+    : "";
+const aboutRows = (i) =>
+  str(i.project_intro) ? `<div style="margin:12px 0 0"><div style="${SMALL_LABEL}">About the project</div><div>${esc(str(i.project_intro))}</div></div>` : "";
+const planRows = (i) =>
+  steps(i).length
+    ? `<div style="margin:12px 0 0"><div style="${SMALL_LABEL}">What we'll do</div><ol style="margin:4px 0 0;padding-left:22px">${steps(i).map((x) => `<li style="margin:2px 0">${esc(x)}</li>`).join("")}</ol></div>`
+    : "";
+const fieldText = (i) => (fieldLabel(i) ? [fieldLabel(i), fieldWhy(i) ? `Why this field: ${fieldWhy(i)}` : ""] : []);
+const aboutText = (i) => (str(i.project_intro) ? [`About the project: ${str(i.project_intro)}`] : []);
+const planText = (i) => (steps(i).length ? ["What we'll do:", ...steps(i).map((x, n) => `${n + 1}. ${x}`)] : []);
+// the body of one item in the plain-text email: tag and why, the project, the three lines, the plan
+const bodyText = (i) => [...fieldText(i), ...aboutText(i), ...lineText(i), ...planText(i)];
 // the bold heading: a short plain name (`headline`), else the title; the key stays as the small grey line under it
 const heading = (i) => i.headline || i.title || i.key;
 const head = (i) => (heading(i) !== i.key ? [heading(i), i.key] : [i.key]);
 const itemButton = (env, i, label) =>
   `<p style="margin:14px 0 0"><a href="${esc(deepLink(env, i.slug))}" style="display:inline-block;background:${BLUE};color:#fff;text-decoration:none;font-weight:600;font-size:16px;padding:12px 22px;border-radius:10px">${esc(label)}</a></p>`;
 
-// One item: bold title, its key, anything specific to the section (`extra`), the three lines, one button.
+// One item: bold title, its key, the field tag and why, anything specific to the section (`extra`),
+// about the project, the three lines, what we'll do, one button.
 const itemCard = (env, i, label, extra = "") =>
-  `<div style="margin:0 0 22px;padding:0 0 22px;border-bottom:1px solid ${LINE}"><div style="font-size:17px;font-weight:700">${esc(heading(i))}</div>${heading(i) !== i.key ? `<div style="font-size:13px;color:${MUTED}">${esc(i.key)}</div>` : ""}${extra}${lineRows(i)}${itemButton(env, i, label)}</div>`;
+  `<div style="margin:0 0 22px;padding:0 0 22px;border-bottom:1px solid ${LINE}"><div style="font-size:17px;font-weight:700">${esc(heading(i))}</div>${heading(i) !== i.key ? `<div style="font-size:13px;color:${MUTED}">${esc(i.key)}</div>` : ""}${fieldRows(i)}${extra}${aboutRows(i)}${lineRows(i)}${planRows(i)}${itemButton(env, i, label)}</div>`;
 const note = (text, color = INK) => (text ? `<div style="margin:10px 0 0;color:${color};font-weight:600">${esc(text)}</div>` : "");
 
 const refreshNote = (i) => (i.refreshing ? "Refreshing now." : shortDate(i.refresh_by) ? `Refresh by ${shortDate(i.refresh_by)}` : "");
@@ -266,13 +295,14 @@ const stuckCard = (env, i) =>
     `${note(i.plain, RED)}${i.why ? `<div style="margin:4px 0 0">Why: ${esc(i.why)}</div>` : ""}${refreshNote(i) ? `<div style="margin:4px 0 0;font-weight:600">${esc(refreshNote(i))}</div>` : ""}`);
 
 export function buildEmail(d, env) {
-  const stuck = d.stuck || [], ready = d.ready || [], waiting = d.waiting_on_you || [];
+  const stuck = d.stuck || [], ready = d.ready || [], fresh = d.new_today || [], waiting = d.waiting_on_you || [];
   const parts = [];
   if (stuck.length) {
     const by = stuck.map((i) => i.refresh_by).filter((x) => shortDate(x)).sort()[0];
     parts.push(`Couldn't send ${count(stuck.length, noun(stuck))}${by ? `: refresh by ${shortDate(by)}` : ""}`);
   }
   if (ready.length) parts.push(`${count(ready.length, noun(ready))} ready to send`);
+  if (fresh.length) parts.push(`${fresh.length} new to look at`);
   if (waiting.length) parts.push(waiting.length === 1 ? "A maintainer replied" : `Maintainers replied on ${waiting.length} PRs`);
   if (d.token_warning) parts.push("GitHub key needs replacing");
   const subject = parts.join(" · ") || "Nothing needs you today";
@@ -283,6 +313,7 @@ export function buildEmail(d, env) {
 ${d.token_warning ? `<p style="background:#fcebec;padding:10px 12px;border-radius:8px"><b>Your GitHub key is ${esc(d.token_age_days)} days old.</b> Replace it soon: sending stops when it expires.</p>` : ""}
 ${stuck.length ? h2("Couldn't send", RED) + stuck.map((i) => stuckCard(env, i)).join("") : ""}
 ${ready.length ? h2("Ready to send") + ready.map((i) => itemCard(env, i, "Review and send")).join("") : ""}
+${fresh.length ? h2("New today") + fresh.map((i) => itemCard(env, i, "Open the briefing")).join("") : ""}
 ${waiting.length ? h2("A maintainer replied") + waiting.map((w) => itemCard(env, w, "Read the reply", note(overdue(w), RED))).join("") : ""}
 ${dashLink(env)}
 </div>`;
@@ -292,9 +323,10 @@ ${dashLink(env)}
   const plain = [
     `OSS Scout ${d.date}`,
     d.token_warning ? `Your GitHub key is ${d.token_age_days} days old. Replace it soon: sending stops when it expires.` : "",
-    ...block("Couldn't send", stuck, (i) => [...head(i), i.plain, i.why ? `Why: ${i.why}` : "", refreshNote(i), ...lineText(i), link(i)]),
-    ...block("Ready to send", ready, (i) => [...head(i), ...lineText(i), link(i)]),
-    ...block("A maintainer replied", waiting, (w) => [...head(w), overdue(w), ...lineText(w), link(w)]),
+    ...block("Couldn't send", stuck, (i) => [...head(i), ...fieldText(i), i.plain, i.why ? `Why: ${i.why}` : "", refreshNote(i), ...aboutText(i), ...lineText(i), ...planText(i), link(i)]),
+    ...block("Ready to send", ready, (i) => [...head(i), ...bodyText(i), link(i)]),
+    ...block("New today", fresh, (i) => [...head(i), ...bodyText(i), link(i)]),
+    ...block("A maintainer replied", waiting, (w) => [...head(w), overdue(w), ...bodyText(w), link(w)]),
     "",
     env.DASHBOARD_URL,
   ].filter((line, n, all) => line || all[n - 1]).join("\n");
@@ -317,7 +349,7 @@ ${dashLink(env)}
   const text = [
     WEEKLY_SUBJECT,
     "Nothing here is urgent. Each one is a laptop session.",
-    ...items.flatMap((i) => ["", ...head(i), ...lineText(i), deepLink(env, i.slug)]),
+    ...items.flatMap((i) => ["", ...head(i), ...bodyText(i), deepLink(env, i.slug)]),
     more > 0 ? ["", `And ${more} more on the dashboard.`] : [],
     "",
     env.DASHBOARD_URL,
