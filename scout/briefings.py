@@ -19,6 +19,7 @@ remembers the issues each night turned down so the scanner stops offering them.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -263,7 +264,10 @@ def ingest(data: Path, state: dict) -> int:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for b in load_all(data):
         # a briefing that claims "ready" but isn't fully prepared still counts, as a plain suggestion
-        if b["_problems"] and validate({**b, "ready": False}, data / b["_dir"]):
+        if b["_problems"] and (bad := validate({**b, "ready": False}, data / b["_dir"])):
+            if b.get("key") not in state["suggestions"]:
+                # say why, so the routine fixes the briefing instead of the pick silently disappearing
+                print(f"[scout] skipped {b['_dir']}: " + "; ".join(bad), file=sys.stderr, flush=True)
             continue
         status = "ready" if b.get("ready") is True and not b["_problems"] else "suggested"
         if b["key"] in state["suggestions"]:

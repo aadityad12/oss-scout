@@ -266,8 +266,10 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
    Use `"deferred"` for good issues you only left out tonight (budget, variety, WIP
    limits), so they come back tomorrow.
 8. `cd /tmp/oss-scout && SCOUT_DATA_DIR=$DATA python3 -m scout ingest && SCOUT_DATA_DIR=$DATA python3 -m scout digest && SCOUT_DATA_DIR=$DATA python3 -m scout render`
-   If ingest leaves a ready item as `suggested`, its files didn't validate: fix them
-   (see `briefings.validate`) or make it a plain briefing (`"ready": false`), then re-run.
+   If ingest prints `skipped briefings/<slug>: ...`, that briefing didn't validate and
+   won't reach the owner: fix what it names (a wrong `field.id`, an empty `plan_steps`, ...)
+   and re-run. If ingest leaves a ready item as `suggested`, its files didn't validate: fix
+   them (see `briefings.validate`) or make it a plain briefing (`"ready": false`), then re-run.
 9. Commit as the tool, not as yourself, and never add co-author or session trailers:
    `cd $DATA && git add -A && git -c user.name="OSS Scout" -c user.email="oss-scout@users.noreply.github.com" commit -m "scout: <date>" && git push origin claude/scout-data`
    The dashboard and the 3-hour check also write to this branch. If the push is rejected,

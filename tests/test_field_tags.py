@@ -214,3 +214,15 @@ def test_template_shows_the_tag_the_intro_and_the_plan():
         body = body[:body.index("\nfunction ", 10)]
         assert "fieldHead(it)" in body and "aboutPlan(it)" in body, fn
         assert body.index("aboutPlan(it)") < body.index("folds(") if fn == "detailBriefing" else body.index("aboutPlan(it)") < body.index("readyFolds(it)")
+
+
+def test_ingest_says_why_a_new_briefing_was_skipped(tmp_path, capsys):
+    import json as _json
+    from scout import briefings, state as statemod
+    d = tmp_path / "briefings" / "o__r__1"
+    d.mkdir(parents=True)
+    _json.dump({"key": "o/r#1", "field": {"id": "nope", "why": "x"}}, (d / "briefing.json").open("w"))
+    st = statemod.load(tmp_path)
+    assert briefings.ingest(tmp_path, st) == 0
+    err = capsys.readouterr().err
+    assert "skipped briefings/o__r__1" in err and "field.id" in err
