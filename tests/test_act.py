@@ -906,7 +906,8 @@ def test_the_digest_lists_stuck_items(env):
                            "why": "The project edited ci.yml.", "fix_action": "refresh", "refresh_by": "2026-10-12",
                            "refreshing": False, "headline": "Fix crash on empty input",  # the draft PR's title
                            "problem": "Crash on empty input", "sending": "A pull request",
-                           "your_part": "Tap Refresh & send by Oct 12"}]
+                           "your_part": "Tap Refresh & send by Oct 12",
+                           "field": None, "project_intro": "", "plan_steps": []}]  # nothing known about o/r
     assert d["send"] is True
     st["suggestions"][KEY]["refresh_requested_at"] = "2026-10-07T11:00:00+00:00"
     assert digest.build(env.cfg, env.data, st, now)["stuck"][0]["refreshing"] is True

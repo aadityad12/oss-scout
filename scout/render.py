@@ -7,6 +7,8 @@ the same as `briefings.slug`) so an email link can open it. The payload is:
                everything its detail view needs (briefing, patch, pr.json, post text, follow-up,
                and for a failed send its `failure` record and whether a refresh is pending) and
                `lines`: the three plain lines the card leads with {problem, sending, your_part}
+               plus `field` {id, label, also, also_label, why} or null, `project_intro` and
+               `plan_steps`, the same as the digest items carry
   to_do        how many items need you today (everything in the inbox except snoozed)
   note         last night's note about why there is (or isn't) a ready item
   in_flight    open PRs, plus claimed, submitting and approved items
@@ -122,6 +124,7 @@ def build_payload(cfg: Config, data: Path, st: dict, now: datetime | None = None
         b = all_b.get(key, {})
         lines = digestmod.lines_of(s, b, now)
         it = {**s, "key": key, "slug": briefings.slug(key), "group": group, "headline": lines.pop("headline"),
+              **digestmod.extras_of(cfg, st, key, b),  # field, project_intro, plan_steps
               "briefing": {k: v for k, v in b.items() if not k.startswith("_")},
               "refresh_pending": refresh.pending(s, now),  # a rebuild was asked for and has no answer yet
               "lines": lines}
