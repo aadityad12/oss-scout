@@ -118,6 +118,12 @@ details.snoozed .rows { display: grid; gap: 10px; margin-top: 10px; }
 .kind { flex: none; font: 600 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .tag { flex: none; font: 600 12.5px/1 var(--body); color: var(--text); padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; white-space: nowrap; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* the field an item counts toward: a neutral pill, the same in every field (no colour per field) */
+.ftag { display: inline-block; max-width: 100%; font: 600 13px/1.3 var(--body); color: var(--ink); background: var(--raised); padding: 3px 10px; border-radius: 999px; overflow-wrap: anywhere; }
+.fieldhead { display: grid; gap: 6px; justify-items: start; }
+.fieldhead .note { justify-self: stretch; }
+.plan { margin: 0; padding-left: 22px; display: grid; gap: 4px; color: var(--text); overflow-wrap: anywhere; }
+.about { margin: 0; color: var(--text); overflow-wrap: anywhere; max-width: 70ch; }
 
 /* rows */
 .item { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; scroll-margin-top: 12px; }
@@ -134,7 +140,8 @@ details.snoozed .rows { display: grid; gap: 10px; margin-top: 10px; }
 .head .t { font: 600 17px/1.4 var(--body); color: var(--ink); overflow-wrap: anywhere; text-wrap: pretty; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .item.open .head .t { -webkit-line-clamp: unset; }
 .head .p { font-size: 15px; color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.item.open .head .p { display: none; }
+.item.open .head .p, .item.open .head .ftag-row { display: none; }
+.head .ftag-row { display: flex; }
 .chev { flex: none; width: 20px; height: 20px; margin-top: 2px; color: var(--muted); transition: transform .15s; }
 .item.open .chev { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
@@ -417,6 +424,26 @@ function threeLines(it) {
   </div></section>`;
 }
 
+/* ---------- the field tag, the project, and the plan ---------- */
+
+// {label, also_label} from scout/digest.py's extras; null when nothing is known about the item's field
+const fieldTag = f => f && f.label ? `<span class="ftag">${esc(f.label)}${f.also_label ? ` · ${esc(f.also_label)}` : ""}</span>` : "";
+
+// the tag and the one plain sentence on why this item is in that field, at the top of a detail view
+function fieldHead(it) {
+  const f = it.field;
+  if (!f || !f.label) return "";
+  return `<section class="sec fieldhead" aria-label="Field">${fieldTag(f)}${f.why ? `<p class="note">Why this field: ${esc(f.why)}</p>` : ""}</section>`;
+}
+
+// what the project is, and what we're going to do, in plain words; each part only when there is something to say
+function aboutPlan(it) {
+  const intro = typeof it.project_intro === "string" ? it.project_intro.trim() : "";
+  const steps = (Array.isArray(it.plan_steps) ? it.plan_steps : []).filter(x => typeof x === "string" && x.trim());
+  return `${intro ? `<section class="sec"><h4>About the project</h4><p class="about">${esc(intro)}</p></section>` : ""}${
+    steps.length ? `<section class="sec"><h4>What we'll do</h4><ol class="plan">${steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol></section>` : ""}`;
+}
+
 const fold = (title, inner) => inner ? `<details class="fold"><summary>${title}</summary><div class="inner">${inner}</div></details>` : "";
 
 // files_explained is ["path: one plain line", ...]
@@ -529,8 +556,10 @@ function detailReady(it) {
   const verb = isPr ? "Submit PR" : "Post comment";
   const canRefresh = isPr && it.failure && it.failure.fix_action === "refresh" && !it.refresh_pending;
   return `<div class="detail" data-key="${esc(it.key)}" data-slug="${esc(it.slug)}" data-repo="${esc(it.repo)}" data-target="${esc(target)}">
+    ${fieldHead(it)}
     ${threeLines(it)}
     ${problemsHtml(it)}
+    ${aboutPlan(it)}
     ${readyFolds(it)}
     ${fields}
     ${modelsLine(b)}
@@ -554,10 +583,12 @@ function detailBriefing(it) {
   const canPark = ["suggested", "ready", "approved"].includes(it.status);
   const pairBtn = it.pairing ? [["unpair", "Unpair", "wide"]] : [["pair", "Pair on laptop", defs.length ? "wide" : "primary"]];
   return `<div class="detail" data-key="${esc(it.key)}" data-slug="${esc(it.slug)}" data-repo="${esc(it.repo)}">
+    ${fieldHead(it)}
     ${threeLines(it)}
     ${it.demoted_reason ? `<p class="reason">${esc(it.demoted_reason)}</p>` : ""}
     ${blocked}
     ${it.pairing ? `<section class="sec"><h4>On your laptop</h4><p class="note">Start a Claude Code session in the oss-scout repo and paste:</p>${copyBlock(`/contribute ${it.key}`)}</section>` : ""}
+    ${aboutPlan(it)}
     ${folds(b, true)}
     ${modelsLine(b)}
     <p class="note">${link(it.url || b.url, "Open the issue ↗")}</p>
@@ -637,7 +668,7 @@ function rowParts(it, group) {
     chips = `${MODE_LABEL[b.mode] ? `<span class="tag">${MODE_LABEL[b.mode]}</span>` : b.difficulty ? `<span class="tag">${esc(b.difficulty)}</span>` : ""}${it.pairing ? `<span class="tag">Pairing</span>` : ""}${it.prepare_requested_at ? `<span class="st on">Requested</span>` : ""}`;
   }
   if (group === "snoozed") chips += `<span class="tag">Back ${esc(inDays(it.snoozed_until))}</span>`;
-  return { ref: it.key, title, sub: (it.lines || {}).problem || "", late: !!it.failure && !it.refresh_pending && group === "ready", chips, age: short(it.suggested_at) };
+  return { ref: it.key, title, sub: (it.lines || {}).problem || "", tag: fieldTag(it.field), late: !!it.failure && !it.refresh_pending && group === "ready", chips, age: short(it.suggested_at) };
 }
 
 function rowHtml(it, group) {
@@ -648,6 +679,7 @@ function rowHtml(it, group) {
       <span class="top-line">${p.chips}<span class="ref">${esc(p.ref)}</span><span class="sp"></span><span class="age">${esc(p.age)}</span></span>
       <span class="title-line"><span class="t">${code(p.title)}</span>${CHEV}</span>
       ${p.sub ? `<span class="p">${esc(p.sub)}</span>` : ""}
+      ${p.tag ? `<span class="ftag-row">${p.tag}</span>` : ""}
     </button>
   </article>`;
 }

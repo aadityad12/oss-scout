@@ -205,3 +205,12 @@ def test_dashboard_items_carry_the_same_extras_as_the_digest(tmp_path):
     for k in ("o/r#1", "o/r#2"):
         assert {n: items[k][n] for n in ("field", "project_intro", "plan_steps")} == \
                {n: by_key[k][n] for n in ("field", "project_intro", "plan_steps")}
+def test_template_shows_the_tag_the_intro_and_the_plan():
+    html = (config.ROOT / "dashboard" / "template.html").read_text()
+    for needle in ("fieldTag(", "Why this field", "About the project", "What we'll do"):
+        assert needle in html, needle
+    for fn in ("detailReady", "detailBriefing"):
+        body = html[html.index(f"function {fn}"):]
+        body = body[:body.index("\nfunction ", 10)]
+        assert "fieldHead(it)" in body and "aboutPlan(it)" in body, fn
+        assert body.index("aboutPlan(it)") < body.index("folds(") if fn == "detailBriefing" else body.index("aboutPlan(it)") < body.index("readyFolds(it)")
