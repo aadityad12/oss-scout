@@ -24,7 +24,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, discover, filters, rank, score, state as statemod, track, wip
+from . import config, discover, fields, filters, rank, score, state as statemod, track, wip
 from .act import ACTIONS
 from .github import GitHub, RateLimited
 
@@ -40,6 +40,69 @@ def output(name: str, value: str) -> None:
             f.write(f"{name}={value}\n")
     else:
         print(f"{name}={value}")
+
+
+REPO_INFO_KEYS = (
+    "stars", "language", "friendliness", "merge_rate", "median_days_to_merge",
+    "median_hours_to_first_response", "merges_elsewhere", "ai_policy", "ai_policy_evidence", "ai_mode",
+    "ai_posts_forbidden", "disclosure_required", "cla",
+    "policy_files", "owner_type", "confident", "description", "homepage")
+
+
+def repo_info(repo: dict) -> dict:
+    info = {k: repo.get(k) for k in REPO_INFO_KEYS}
+    info["topics"] = repo.get("topics") or []  # measurements cached before topics were stored lack it
+    return info
+
+
+def field_hint(cfg, issue: dict, info: dict) -> dict:
+    tier = cfg.tier_of(issue["repo"])
+    return fields.hint(issue["repo"], tier.field if tier else None, cfg.repo_fields,
+                       info["topics"], info["description"])
+
+
+def pick_candidates(gh, cfg, scored: list[dict], repos: dict[str, dict],
+                    dropped: dict[str, int], now: datetime | None = None) -> tuple[list[dict], int]:
+    """Walk the ranked issues, check each one's timeline, keep the free ones.
+
+    Timeline checks are one API call per issue (cached 3h), so they stop at
+    `max_checked`. Returns the candidates and how many issues were left unchecked
+    when that cap was hit, so a dry night can be told apart from an unchecked one.
+    """
+    s = cfg.settings
+    want = s.get("max_candidates", 10)
+    max_checked = s.get("max_checked", want * 12)
+    cap = s.get("max_per_repo_wide", 2) if cfg.wide_phase() else s.get("max_per_repo", 4)
+    per_repo: dict[str, int] = {}
+    final, checked, unchecked = [], 0, 0
+    for n, issue in enumerate(scored):
+        if len(final) >= want:
+            break
+        if checked >= max_checked:
+            unchecked = sum(1 for i in scored[n:] if per_repo.get(i["repo"], 0) < cap)
+            if unchecked:
+                dropped["checked cap reached"] = unchecked
+                log(f"timeline check cap ({max_checked}) reached, {unchecked} ranked issues left unchecked")
+            break
+        if per_repo.get(issue["repo"], 0) >= cap:
+            continue
+        checked += 1
+        act = filters.activity(gh, issue["repo"], issue["number"], s.get("claim_window_days", 21), now=now,
+                               stale_pr_days=s.get("stale_pr_days", 90))
+        others = [c for c in act["recent_claims"] if c["by"] != cfg.login]
+        if act["linked_open_prs"]:
+            dropped["has open PR"] = dropped.get("has open PR", 0) + 1
+            continue
+        if others:
+            dropped["recently claimed"] = dropped.get("recently claimed", 0) + 1
+            continue
+        issue["stale_linked_prs"] = act.pop("stale_linked_prs")
+        issue["activity"] = act
+        issue["repo_info"] = repo_info(repos[issue["repo"]])
+        issue["field_hint"] = field_hint(cfg, issue, issue["repo_info"])
+        final.append(issue)
+        per_repo[issue["repo"]] = per_repo.get(issue["repo"], 0) + 1
+    return final, unchecked
 
 
 def cmd_run(args, cfg, data, gh) -> None:
@@ -70,8 +133,11 @@ def cmd_run(args, cfg, data, gh) -> None:
     for repo in sorted({i["repo"] for i in issues}):
         if repo not in tier_repos:
             meta = gh.repo(repo) or {}
-            if meta.get("archived") or (meta.get("stargazers_count") or 0) < cfg.discovery.get("min_stars", 0):
-                repos[repo] = {"archived": meta.get("archived"), "stars": meta.get("stargazers_count")}
+            owner_type = (meta.get("owner") or {}).get("type")
+            if (meta.get("archived") or (meta.get("stargazers_count") or 0) < cfg.discovery.get("min_stars", 0)
+                    or (cfg.discovery.get("require_org") and owner_type != "Organization")):
+                repos[repo] = {"archived": meta.get("archived"), "stars": meta.get("stargazers_count"),
+                               "owner_type": owner_type}
                 continue
         if repo not in st["repos"] or budget[0] > 0:
             log(f"measuring {repo}")
@@ -87,33 +153,7 @@ def cmd_run(args, cfg, data, gh) -> None:
         scored.append(issue)
     scored.sort(key=lambda i: i["score"], reverse=True)
 
-    # Timeline checks are one API call per issue, so only for the top slice.
-    want = s.get("max_candidates", 10)
-    cap = s.get("max_per_repo_wide", 2) if cfg.wide_phase() else s.get("max_per_repo", 4)
-    per_repo: dict[str, int] = {}
-    final, checked = [], 0
-    for issue in scored:
-        if len(final) >= want or checked >= want * 5:
-            break
-        if per_repo.get(issue["repo"], 0) >= cap:
-            continue
-        checked += 1
-        act = filters.activity(gh, issue["repo"], issue["number"], s.get("claim_window_days", 21))
-        others = [c for c in act["recent_claims"] if c["by"] != cfg.login]
-        if act["linked_open_prs"]:
-            dropped["has open PR"] = dropped.get("has open PR", 0) + 1
-            continue
-        if others:
-            dropped["recently claimed"] = dropped.get("recently claimed", 0) + 1
-            continue
-        issue["activity"] = act
-        issue["repo_info"] = {k: repos[issue["repo"]].get(k) for k in (
-            "stars", "language", "friendliness", "merge_rate", "median_days_to_merge",
-            "median_hours_to_first_response", "merges_elsewhere", "ai_policy", "ai_policy_evidence", "ai_mode",
-            "ai_posts_forbidden", "disclosure_required", "cla",
-            "policy_files", "owner_type", "confident")}
-        final.append(issue)
-        per_repo[issue["repo"]] = per_repo.get(issue["repo"], 0) + 1
+    final, unchecked = pick_candidates(gh, cfg, scored, repos, dropped)
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     statemod.write_json(data / "candidates.json", {
@@ -126,7 +166,8 @@ def cmd_run(args, cfg, data, gh) -> None:
         "candidates": final,
     })
     st["runs"].append({"at": now, "raw": len(issues), "eligible": len(scored),
-                       "candidates": len(final), "dropped": dropped, "api_calls": gh.calls,
+                       "candidates": len(final), "dropped": dropped, "unchecked": unchecked,
+                       "api_calls": gh.calls,
                        "seconds": round(time.time() - started)})
     statemod.save(data, st)
     log(f"{len(final)} candidates -> {data / 'candidates.json'} ({gh.calls} API calls)")
