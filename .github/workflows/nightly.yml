@@ -50,19 +50,42 @@ jobs:
           SCOUT_DATA_DIR: data
         run: python -m scout run
 
+      # The 3-hourly track workflow also pushes to this branch (state.json), and it
+      # can do so during the scan. When the rebase or push fails, start again from
+      # the branch's latest commit and redo the scan: the HTTP cache in data/.cache
+      # (untracked, so it survives the reset) makes the second run fast.
       - name: Save results to the data repo
         working-directory: data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOUT_DATA_DIR: data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No changes"
-          else
+          # Never commit the HTTP cache, whatever the data repo's .gitignore says.
+          git check-ignore -q .cache || echo ".cache/" >> "$(git rev-parse --git-dir)/info/exclude"
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              echo "Attempt $attempt: starting over from the latest data and scanning again"
+              git fetch -q origin claude/scout-data
+              git reset -q --hard origin/claude/scout-data
+              (cd "$GITHUB_WORKSPACE" && python -m scout run) || continue
+            fi
+            git add -A
+            if git diff --cached --quiet; then
+              echo "No changes"
+              exit 0
+            fi
             git commit -q -m "scan: $(date -u +%Y-%m-%d)"
-            git pull -q --rebase origin claude/scout-data
-            git push -q origin HEAD:claude/scout-data
-          fi
+            if git pull -q --rebase origin claude/scout-data && git push -q origin HEAD:claude/scout-data; then
+              echo "Saved on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt could not save"
+            git rebase --abort 2>/dev/null || true
+          done
+          echo "::error::Could not save the scan results after 3 attempts"
+          exit 1
 
       # Routines can't be triggered by a workflow finishing, so this calls the
       # routine's API trigger. Skipped until both secrets are set; the routine's
