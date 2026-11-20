@@ -283,3 +283,21 @@ def test_tier_repos_are_not_marked_down_for_size():
     issue = {"repo": tier_repo, "created_at": "2026-11-01T00:00:00Z", "label_groups": ["beginner"], "comments": 0}
     out = rank.score_issue(issue, {"stars": 136, "owner_type": "Organization"}, cfg, {})
     assert out["multipliers"]["size"] == 1.0
+
+
+def test_assigned_issues_stay_in_where_the_assignee_is_the_area_maintainer(cfg):
+    from scout import rank
+    assert "zephyrproject-rtos/zephyr" in cfg.assignee_is_maintainer
+    issue = {**issue_for("zephyrproject-rtos/zephyr"), "assignees": ["area-maintainer"]}
+    assert rank.eligible(issue, {"stars": 17000, "owner_type": "Organization"}, cfg, {}, now=NOW) is None
+    other = {**issue_for("duckdb/duckdb"), "assignees": ["someone"]}
+    assert rank.eligible(other, {"stars": 40000}, cfg, {}, now=NOW) == "assigned"
+
+
+def test_labels_named_in_targets_are_used_even_past_the_label_list(cfg):
+    from scout import discover
+    class FakeGH:
+        def paginate(self, *a, **k):
+            return iter([{"name": "Good first issue"}])  # the listing stops before "priority: low"
+    got = discover.interesting_labels(FakeGH(), "zephyrproject-rtos/zephyr", cfg)
+    assert got["Good first issue"] == ["beginner"] and "priority: low" in got

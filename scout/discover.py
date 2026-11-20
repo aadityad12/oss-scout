@@ -23,6 +23,10 @@ def interesting_labels(gh: GitHub, repo: str, cfg: Config) -> dict[str, list[str
             groups = groups or ["confirmed_bug"]
         if groups:
             out[name] = groups
+    # labels named in targets.toml are used even when the repo has too many labels to list them all
+    # (Zephyr has over 500); asking for a label that doesn't exist just finds no issues
+    for name in cfg.repo_labels.get(repo, []):
+        out.setdefault(name, label_groups_for(name, cfg) or ["confirmed_bug"])
     return out
 
 
@@ -51,9 +55,10 @@ def from_tiers(gh: GitHub, cfg: Config, per_label: int = 30) -> list[dict]:
         for repo in tier.repos:
             labels = interesting_labels(gh, repo, cfg)
             for label, groups in labels.items():
-                for issue in gh.paginate(f"repos/{repo}/issues",
-                                         {"state": "open", "labels": label, "assignee": "none",
-                                          "sort": "created", "direction": "desc"},
+                query = {"state": "open", "labels": label, "sort": "created", "direction": "desc"}
+                if cfg.assignee_claims(repo):
+                    query["assignee"] = "none"
+                for issue in gh.paginate(f"repos/{repo}/issues", query,
                                          max_items=per_label, ttl=3600):
                     if "pull_request" in issue:
                         continue

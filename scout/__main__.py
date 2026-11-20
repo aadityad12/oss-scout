@@ -113,7 +113,8 @@ def cmd_run(args, cfg, data, gh) -> None:
     log("tracking your contributions")
     try:
         st["contributions"] = track.collect(gh, cfg.login)
-        track.update_suggestions(gh, st, st["contributions"], s.get("skip_after_days", 14))
+        track.update_suggestions(gh, st, st["contributions"], s.get("skip_after_days", 14),
+                                 maintainer_assigned=set(cfg.assignee_is_maintainer))
         track.alert(st, data)  # the routine runs right after this scan, so no extra run is started
     except RateLimited as e:
         log(f"tracking skipped, keeping previous history: {e}")
@@ -182,7 +183,8 @@ def cmd_run(args, cfg, data, gh) -> None:
 def cmd_track(args, cfg, data, gh) -> None:
     st = statemod.load(data)
     st["contributions"] = track.collect(gh, cfg.login)
-    track.update_suggestions(gh, st, st["contributions"], cfg.settings.get("skip_after_days", 14))
+    track.update_suggestions(gh, st, st["contributions"], cfg.settings.get("skip_after_days", 14),
+                             maintainer_assigned=set(cfg.assignee_is_maintainer))
     fire = track.extra_draft(st, track.alert(st, data))
     statemod.save(data, st)
     print(json.dumps(st["contributions"]["per_repo"], indent=2))

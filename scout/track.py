@@ -186,7 +186,9 @@ def pending_sends(state: dict) -> list[str]:
 
 
 def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_days: int,
-                       now: datetime | None = None) -> None:
+                       now: datetime | None = None, maintainer_assigned: set[str] | frozenset = frozenset()) -> None:
+    """`maintainer_assigned`: repos where every issue is assigned to its area maintainer, so an
+    assignee there doesn't mean someone else took the issue."""
     now = now or datetime.now(timezone.utc)
     commented = set(contributions.get("commented_issues", []))
     for key, s in state.get("suggestions", {}).items():
@@ -214,7 +216,7 @@ def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_
             s["status"] = "claimed"
         else:
             issue = gh.get(f"repos/{repo}/issues/{number}", ttl=3 * 3600)
-            if issue.get("state") == "closed" or issue.get("assignees"):
+            if issue.get("state") == "closed" or (issue.get("assignees") and repo not in maintainer_assigned):
                 s["status"] = "taken"
             elif _days(parse_ts(s["suggested_at"]), now) > skip_after_days:
                 s["status"] = "skipped"
@@ -224,7 +226,7 @@ def update_suggestions(gh: GitHub, state: dict, contributions: dict, skip_after_
                 issue = issue or gh.get(f"repos/{repo}/issues/{number}", ttl=3 * 3600)
             except NotFound:
                 issue = {"state": "closed"}
-            if issue.get("state") != "closed" and not issue.get("assignees"):
+            if issue.get("state") != "closed" and (not issue.get("assignees") or repo in maintainer_assigned):
                 rival = competing_pr(lambda p: gh.get(p, ttl=TIMELINE_TTL), repo, number, contributions.get("login", ""))
                 if rival:
                     s["status"], s["taken_by"] = "taken", rival

@@ -92,7 +92,7 @@ def eligible(issue: dict, repo: dict, cfg: Config, state: dict,
             return "turned down recently"
     if repo.get("archived"):
         return "repo archived"
-    if issue.get("assignees"):
+    if issue.get("assignees") and cfg.assignee_claims(issue["repo"]):
         return "assigned"
     if _days(parse_ts(issue["created_at"]), now) > cfg.settings.get("issue_max_age_days", 365):
         return "too old"

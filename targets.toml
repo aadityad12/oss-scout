@@ -9,6 +9,11 @@
 # of GitHub too, just with a lower weight, and only keeps big organization-owned
 # repos. Edit freely; the scout re-reads this every run.
 
+# Projects that assign every new issue to the maintainer of that area of the code.
+# There an assignee is the reviewer, not someone already fixing it, so assigned
+# issues stay in. (Zephyr assigns about 9 in 10.)
+assignee_is_maintainer = ["zephyrproject-rtos/zephyr"]
+
 [user]
 login = "aadityad12"
 name = "Aaditya Desai"   # the author name on commits made for you
@@ -149,3 +154,5 @@ repos = [
 # Per-repo extra labels worth watching (on top of the label groups above).
 [repo_labels]
 "duckdb/duckdb" = ["reproduced"]
+# Zephyr has few beginner labels; its low-priority issues are the small, well-scoped ones.
+"zephyrproject-rtos/zephyr" = ["priority: low"]

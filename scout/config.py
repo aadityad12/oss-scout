@@ -31,6 +31,8 @@ class Config:
     name: str = ""
     repo_labels: dict[str, list[str]] = field(default_factory=dict)
     repo_fields: dict[str, str] = field(default_factory=dict)  # per-repo field override
+    # repos that assign every issue to the area maintainer: there an assignee is the reviewer, not a claim
+    assignee_is_maintainer: list[str] = field(default_factory=list)
 
     def tier_of(self, repo: str) -> Tier | None:
         low = repo.lower()
@@ -38,6 +40,10 @@ class Config:
             if low in (r.lower() for r in t.repos):
                 return t
         return None
+
+    def assignee_claims(self, repo: str) -> bool:
+        """Does an assignee mean someone is working on the issue? Not in repos that assign maintainers."""
+        return repo.lower() not in (r.lower() for r in self.assignee_is_maintainer)
 
     def wide_phase(self, today: date | None = None) -> bool:
         until = self.settings.get("wide_phase_until")
@@ -60,6 +66,7 @@ def load(path: Path | None = None) -> Config:
         name=raw["user"].get("name", ""),
         repo_labels=raw.get("repo_labels", {}),
         repo_fields=raw.get("repo_fields", {}),
+        assignee_is_maintainer=raw.get("assignee_is_maintainer", []),
     )
 
 

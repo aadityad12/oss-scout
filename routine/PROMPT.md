@@ -159,6 +159,11 @@ and impact lines. Keep usage low: Sonnet only, no subagents.
      huge refactor. Embedded issues that need real hardware are fine for a `pair`
      briefing only if the bug can be shown on an emulator or host target (Zephyr's
      `native_sim` or `qemu_*`); never mark them `ready` unless that ran.
+   - In projects listed under `assignee_is_maintainer` in `targets.toml` (Zephyr), the
+     issue's assignee is the area maintainer who reviews the fix, not someone working on
+     it. Read the thread: if the assignee or anyone else says they're on it, skip it;
+     otherwise say in `why` who the assigned maintainer is, and in `comment_facts` /
+     `claim_comment` ask them whether an outside fix is welcome.
    - `activity.stale_linked_prs` lists open PRs linked to the issue that nobody has
      touched in months. They don't block, but say so in `why` and in `comment_facts` /
      `claim_comment` (ask whether the old PR is abandoned before starting).
