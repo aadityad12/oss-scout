@@ -19,6 +19,16 @@ the same as `briefings.slug`) so an email link can open it. The payload is:
   digest, login, generated_at
 
 Nothing secret goes in: only what state.json, the briefings and digest.json already hold.
+
+`render` also writes the same payload, plus a version number, to `dashboard.json` next to
+`dashboard.html` so other programs can read it without parsing the page. The rules for that file
+(its fields are listed in docs/dashboard-json.md):
+
+  - Nothing secret goes in, exactly as for the page: no tokens, only what state.json, the
+    briefings and digest.json already hold. Never add a field that reads the environment.
+  - Adding a field keeps `SCHEMA_VERSION`.
+  - Removing a field, renaming it, or changing its type bumps `SCHEMA_VERSION`.
+  - Readers must ignore fields they don't know and refuse a `schema_version` they don't know.
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import briefings, digest as digestmod, plain, public, refresh, wip
+from .state import write_json
 from .config import ROOT, Config
 
 UNSENT = ("ready", "approved", "submitting")
@@ -37,6 +48,7 @@ SNOOZABLE = ("suggested", "ready", "approved")
 GROUPS = (("waiting", "Waiting on you"), ("ready", "Ready"), ("pairing", "Pairing queue"),
           ("briefings", "New briefings"), ("snoozed", "Snoozed"))
 LOG_ACTIONS, LOG_RUNS = 30, 10
+SCHEMA_VERSION = 1  # bump when a field of dashboard.json is removed, renamed or changes type
 
 
 def latest_picks(data: Path) -> dict:
@@ -205,4 +217,6 @@ def render(cfg: Config, data: Path, st: dict) -> Path:
     html = (ROOT / "dashboard" / "template.html").read_text()
     out = data / "dashboard.html"
     out.write_text(html.replace("/*__SCOUT_DATA__*/null", text))
+    # the same data as a plain file; written to a temp file and renamed, so a reader never sees half of it
+    write_json(out.with_name("dashboard.json"), {"schema_version": SCHEMA_VERSION, **payload})
     return out

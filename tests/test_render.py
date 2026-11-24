@@ -407,3 +407,43 @@ def test_inbox_items_carry_a_headline_apart_from_the_lines(tmp_path):
             if gr["id"] != "waiting":
                 assert i["headline"] and "headline" not in i["lines"], i["key"]
     assert p["inbox"][1]["items"][0]["headline"] == "Fix it"  # a draft PR borrows pr.json's title
+
+
+# -- dashboard.json ------------------------------------------------------------------
+
+def test_render_writes_dashboard_json_next_to_the_page(tmp_path):
+    data, st = world(tmp_path)
+    out = render.render(config.load(), data, st)
+    assert out == data / "dashboard.html"
+    doc = json.loads((data / "dashboard.json").read_text())
+    assert doc["schema_version"] == render.SCHEMA_VERSION == 1
+    assert set(doc) == {"schema_version", "generated_at", "login", "digest", "inbox", "to_do", "note",
+                        "in_flight", "portfolio", "limits", "projects", "log"}
+    assert [g["id"] for g in doc["inbox"]] == ["waiting", "ready", "pairing", "briefings", "snoozed"]
+    assert all(set(g) == {"id", "label", "items"} for g in doc["inbox"])
+
+
+def test_dashboard_json_matches_the_embedded_payload(tmp_path):
+    data, st = world(tmp_path)
+    html = render.render(config.load(), data, st).read_text()
+    doc = json.loads((data / "dashboard.json").read_text())
+    doc.pop("schema_version")
+    assert doc == embedded(html)
+    assert "<\\/" not in (data / "dashboard.json").read_text()  # the page's </ escaping is not applied here
+
+
+def test_render_leaves_only_the_two_outputs(tmp_path):
+    data, st = world(tmp_path)
+    before = {p.name for p in data.iterdir()}
+    render.render(config.load(), data, st)
+    assert {p.name for p in data.iterdir()} - before == {"dashboard.html", "dashboard.json"}
+    assert not list(data.glob("*.tmp"))
+
+
+def test_dashboard_json_has_no_token_shaped_strings(tmp_path, monkeypatch):
+    for name in ("GH_TOKEN", "SUBMIT_TOKEN", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(name, "ghp_secret_sentinel")
+    data, st = world(tmp_path)
+    render.render(config.load(), data, st)
+    text = (data / "dashboard.json").read_text()
+    assert not re.search(r"ghp_|github_pat_|sk-", text)
