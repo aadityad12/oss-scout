@@ -1,0 +1,8 @@
+{
+  "attribution": {"commit": "", "pr": "", "sessionUrl": false},
+  "hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command",
+    "command": "python3 /usr/local/lib/holt/guard/guard.py --profile agent", "onFailure": "block"}]}]},
+  "permissions": {"deny": ["Bash(gh pr create:*)", "Bash(gh pr new:*)", "Bash(gh pr comment:*)", "Bash(gh pr review:*)",
+    "Bash(gh pr merge:*)", "Bash(gh issue create:*)", "Bash(gh issue new:*)", "Bash(gh issue comment:*)",
+    "Bash(gh repo fork:*)", "Bash(gh repo create:*)", "Bash(gh repo new:*)", "Bash(git push:*)"]}
+}
