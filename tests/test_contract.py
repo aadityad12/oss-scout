@@ -61,9 +61,10 @@ def test_key_pattern_accepts_and_rejects_what_the_scout_does():
 
 
 def test_the_workflow_checks_keys_with_the_contract_pattern():
-    # only the key check itself: echo "$KEY" | grep -Eq '...'
+    # only active lines (not comments) with the key check itself: echo "$KEY" | grep -Eq '...'
     for name, text in (("ACT_YML", datarepo.ACT_YML), ("TRACK_YML", datarepo.TRACK_YML)):
-        patterns = re.findall(r"""echo "\$(?:KEY|key)" \| grep -Eq '([^']*)'""", text)
+        patterns = re.findall(
+            r"""^[ \t]*[^#\n]*echo "\$(?:KEY|key)" \| grep -Eq '([^']*)'""", text, re.M)
         assert patterns, f"no key check in {name}"
         assert set(patterns) == {CONTRACT["key_pattern"]}, name
 

@@ -448,4 +448,6 @@ def test_dashboard_json_has_no_token_shaped_strings(tmp_path, monkeypatch):
     data, st = world(tmp_path)
     render.render(config.load(), data, st)
     text = (data / "dashboard.json").read_text()
+    for value in ("ghp_sentinel", "github_pat_sentinel", "sk-sentinel"):
+        assert value not in text, value
     assert not re.search(r"\b(?:ghp_|github_pat_|sk-)", text)
