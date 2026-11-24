@@ -38,8 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import briefings, digest as digestmod, plain, public, refresh, wip
-from .state import write_json
 from .config import ROOT, Config
+from .state import write_json
 
 UNSENT = ("ready", "approved", "submitting")
 READY = ("ready", "approved")  # what the inbox can send; "submitting" is already on its way
@@ -218,5 +218,5 @@ def render(cfg: Config, data: Path, st: dict) -> Path:
     out = data / "dashboard.html"
     out.write_text(html.replace("/*__SCOUT_DATA__*/null", text))
     # the same data as a plain file; written to a temp file and renamed, so a reader never sees half of it
-    write_json(out.with_name("dashboard.json"), {"schema_version": SCHEMA_VERSION, **payload})
+    write_json(out.with_name("dashboard.json"), {**payload, "schema_version": SCHEMA_VERSION})
     return out

@@ -429,6 +429,7 @@ def test_dashboard_json_matches_the_embedded_payload(tmp_path):
     doc = json.loads((data / "dashboard.json").read_text())
     doc.pop("schema_version")
     assert doc == embedded(html)
+    assert "</" in (data / "dashboard.json").read_text()  # the fixtures hold "</", so this checks something
     assert "<\\/" not in (data / "dashboard.json").read_text()  # the page's </ escaping is not applied here
 
 
@@ -441,8 +442,9 @@ def test_render_leaves_only_the_two_outputs(tmp_path):
 
 
 def test_dashboard_json_has_no_token_shaped_strings(tmp_path, monkeypatch):
-    for name in ("GH_TOKEN", "SUBMIT_TOKEN", "ANTHROPIC_API_KEY"):
-        monkeypatch.setenv(name, "ghp_secret_sentinel")
+    for name, value in (("GH_TOKEN", "ghp_sentinel"), ("SUBMIT_TOKEN", "github_pat_sentinel"),
+                        ("ANTHROPIC_API_KEY", "sk-sentinel")):
+        monkeypatch.setenv(name, value)
     data, st = world(tmp_path)
     render.render(config.load(), data, st)
     text = (data / "dashboard.json").read_text()
