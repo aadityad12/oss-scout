@@ -23,6 +23,7 @@ test("the actions that ignore their text are the contract's", () => {
 test("the key pattern is the contract's and sorts the sample keys the same way", () => {
   // new RegExp writes a / as \/ in its source, so compare against the pattern as a RegExp
   assert.equal(KEY_RE.source, new RegExp(contract.key_pattern).source);
+  assert.equal(KEY_RE.flags, "");
   for (const { key, valid } of samples) assert.equal(KEY_RE.test(key), valid, JSON.stringify(key));
 });
 

@@ -53,11 +53,20 @@ def test_key_pattern_accepts_and_rejects_what_the_scout_does():
         key, valid = sample["key"], sample["valid"]
         # fullmatch, because Python's `$` also matches before a trailing newline
         assert bool(pattern.fullmatch(key)) == valid, key
+        # the scout itself calls KEY.match, which also accepts a trailing newline; the Worker
+        # rejects such keys first, so the scout never sees one
         assert bool(act.KEY.fullmatch(key)) == valid, key
         assert bool(pattern.match(key)) == bool(act.KEY.match(key)), key
 
 
+def test_the_workflow_checks_keys_with_the_contract_pattern():
+    patterns = re.findall(r"grep -Eq '([^']*)'", datarepo.ACT_YML)
+    assert patterns, "no grep key check in ACT_YML"
+    assert set(patterns) == {CONTRACT["key_pattern"]}
+
+
 def test_modes_match_the_briefings():
+    assert len(CONTRACT["modes"]) == len(set(CONTRACT["modes"]))
     assert set(CONTRACT["modes"]) == briefings.MODES
     assert CONTRACT["legacy_modes"] == briefings.LEGACY_MODES
 
@@ -82,5 +91,5 @@ def test_the_run_name_is_the_contract_run_name():
 
 def test_the_workflow_is_written_as_the_file_the_contract_names():
     # datarepo writes act.yml under .github/workflows; the Worker dispatches it by that name
-    assert CONTRACT["workflow"]["file"] == "act.yml"
-    assert '(wf / "act.yml").write_text(ACT_YML)' in (ROOT / "scout" / "datarepo.py").read_text()
+    name = CONTRACT["workflow"]["file"]
+    assert f'(wf / "{name}").write_text(ACT_YML)' in (ROOT / "scout" / "datarepo.py").read_text()
