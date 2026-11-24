@@ -69,7 +69,7 @@ It loads the briefing, reuses one local clone per project, and prepares the comm
 ## Where things live
 
 - **This repo (public)**: the scanner and tools (`scout/`), the Claude guard hook (`guard/`), the routine's instructions (`routine/PROMPT.md`), the dashboard template (`dashboard/`), the Worker (`worker/`), and `targets.toml`, where every setting lives.
-- **`aadityad12/oss-scout-data` (private)**: `main` holds the routine's `.claude/` config and `act.yml`. Branch `claude/scout-data` holds `state.json`, `briefings/<owner>__<repo>__<n>/` (briefing, `draft.patch`, `pr.json`, `post.md`, `followups/`), `picks/`, `digest.json` and `dashboard.html`.
+- **`aadityad12/oss-scout-data` (private)**: `main` holds the routine's `.claude/` config and `act.yml`. Branch `claude/scout-data` holds `state.json`, `briefings/<owner>__<repo>__<n>/` (briefing, `draft.patch`, `pr.json`, `post.md`, `followups/`), `picks/`, `digest.json`, `dashboard.html` and `dashboard.json` (the same data for other programs, see `docs/dashboard-json.md`).
 - **me.aadityad.dev (private)**: a Cloudflare Worker behind Cloudflare Access. It serves `dashboard.html` and turns a tap into an `act.yml` run.
 - **[oss.aadityad.dev](https://oss.aadityad.dev) (public)**: your contributions only: merged and open PRs, projects, activity. No briefings, no research.
 

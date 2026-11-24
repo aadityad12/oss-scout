@@ -7,13 +7,13 @@
 // checks the Access token again on every request.
 
 export const ACTIONS = ["submit", "post", "followup", "approve", "later", "skip", "prepare", "pair", "unpair", "feature", "unfeature", "summary", "refresh"];
-const NO_TEXT_ACTIONS = ["prepare", "pair", "unpair", "feature", "unfeature", "refresh"]; // these ignore title and body
+export const NO_TEXT_ACTIONS = ["prepare", "pair", "unpair", "feature", "unfeature", "refresh"]; // these ignore title and body
 export const MAX_SUMMARY = 200; // the impact line of a PR
 export const KEY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[0-9]+$/;
 export const MAX_TITLE = 256;
 export const MAX_BODY = 60000;
-const MAX_REQUEST = 200000;
-const MAX_DISPATCH_BODY = 60000; // GitHub caps all workflow inputs at 65,535 characters; the body travels as base64
+export const MAX_REQUEST = 200000;
+export const MAX_DISPATCH_BODY = 60000; // GitHub caps all workflow inputs at 65,535 characters; the body travels as base64
 const GITHUB = "https://api.github.com";
 const CERT_TTL_MS = 60 * 60 * 1000;
 const ALERT_WINDOW_MS = 3 * 60 * 60 * 1000; // an alerts.json older than one check cycle is stale
