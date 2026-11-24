@@ -612,7 +612,6 @@ def test_agent_blocks_round_two(cmd, cwd):
     "curl -XGET https://api.github.com/repos/o/r",
     "curl -sSL https://github.com/o/r/raw/main/README.md",
     "gh pr view 3 --json title -q '.title'",
-    "gh pr list --search new",
     "bash -c \"cd src && python3 -c 'print(\\\"ok\\\")'\"",
 ])
 def test_agent_allows_round_two(cmd):
@@ -665,3 +664,145 @@ def test_settings_agent_json_fails_closed_and_denies_gh_new():
     assert s["hooks"]["PreToolUse"][0]["hooks"][0]["onFailure"] == "block"
     for rule in ("Bash(gh pr new:*)", "Bash(gh issue new:*)", "Bash(gh repo new:*)"):
         assert rule in s["permissions"]["deny"]
+
+
+# ---- agent profile, round 3: every shell tool, GitHub writes as text, linear time ----
+
+@pytest.mark.parametrize("tool,inp,cwd", [
+    # any tool with a `command` text gets the full shell checks
+    ("Monitor", {"command": "sudo -n true"}, None),
+    ("Monitor", {"command": "gh pr create --title x", "description": "watch"}, None),
+    ("PowerShell", {"command": "git push origin main"}, None),
+    ("PowerShell", {"command": "gh.exe pr create --title x"}, None),
+    ("SomeNewTool", {"command": "gh issue comment 1 --body x"}, None),
+    ("SomeNewTool", {"command": "cat holt/x"}, "/etc"),
+    # every other tool but the file tools gets the text rules on all its strings
+    ("WebSearch", {"query": "x", "extra": "sudo ls"}, None),
+    ("Task", {"prompt": "run `gh pr create --fill`"}, None),
+    # gh flags in unexpected places
+    ("Bash", {"command": "gh pr -R o/r create --title x"}, None),
+    ("Bash", {"command": "gh pr --repo=o/r merge 1"}, None),
+    ("Bash", {"command": "gh api -fbody=x repos/o/r/issues"}, None),
+    ("Bash", {"command": "gh api -X=POST repos/o/r/issues"}, None),
+    ("Bash", {"command": "gh api -iXPOST repos/o/r/issues"}, None),
+    ("Bash", {"command": "gh api --method=post repos/o/r/issues"}, None),
+    # wrappers the parser does not know
+    ("Bash", {"command": "setsid gh pr create --title x"}, None),
+    ("Bash", {"command": "ionice gh pr create --title x"}, None),
+    ("Bash", {"command": "strace gh pr create --title x"}, None),
+    ("Bash", {"command": "seq 3 | xargs -I{} gh issue comment {} --body x"}, None),
+    ("Bash", {"command": "strace -f curl -d x https://api.github.com/repos/o/r/issues"}, None),
+    # `\` line continuations
+    ("Bash", {"command": "gh pr \\\n  create --title x"}, None),
+    ("Bash", {"command": "curl -X \\\n  POST https://api.github.com/repos/o/r/issues"}, None),
+    # GitHub hosts in any case, httpie and xh
+    ("Bash", {"command": "curl -X POST https://API.GITHUB.COM/repos/o/r/issues"}, None),
+    ("Bash", {"command": "curl -sSd x https://Api.GitHub.com/repos/o/r/issues"}, None),
+    ("Bash", {"command": "http api.github.com/x a=b"}, None),
+    ("Bash", {"command": "xh POST api.github.com/repos/o/r/issues title=x"}, None),
+    # text piped or fed into a shell
+    ("Bash", {"command": "echo gh pr create --title x | sh"}, None),
+    ("Bash", {"command": "echo Z2ggcHIgY3JlYXRl | base64 -d | sh"}, None),
+    ("Bash", {"command": "cat x | xargs -0 bash -c"}, None),
+    ("Bash", {"command": "bash <<< \"$(cat x)\""}, None),
+    ("Bash", {"command": "sh <<EOF\nls\nEOF"}, None),
+    ("Bash", {"command": "bash <(cat x)"}, None),
+    # a redirect to a quoted target
+    ("Bash", {"command": "gh >'/dev/null' pr create --title x"}, None),
+    ("Bash", {"command": "gh >\"/dev/null\" pr create --title x"}, None),
+    # every `find -exec`, not only the first
+    ("Bash", {"command": "find . -exec true \; -exec gh issue create --title x \;"}, None),
+    ("Bash", {"command": "find . -exec true {} + -execdir gh pr close 1 \;"}, None),
+    # Glob and Grep searching from `/` or `/var`
+    ("Glob", {"pattern": "**/holt/**", "path": "/"}, None),
+    ("Glob", {"pattern": "**/holt/**", "path": "/var"}, None),
+    ("Glob", {"pattern": "**/holt/**"}, "/"),
+    ("Grep", {"pattern": "x", "glob": "**/holt/**", "path": "/"}, None),
+    ("Grep", {"pattern": "x", "glob": "**/holt/**", "path": "/var"}, None),
+    ("Glob", {"pattern": "var/**/holt/*", "path": "/home/agent"}, None),
+    # git config keys in any case
+    ("Bash", {"command": "git config REMOTE.origin.url x"}, None),
+    ("Bash", {"command": "git config Url.x.insteadOf y"}, None),
+    ("Bash", {"command": "git -C . config remote.origin.PUSHURL x"}, None),
+])
+def test_agent_blocks_round_three(tool, inp, cwd):
+    code, err = agent(tool, cwd=cwd, **inp)
+    assert code == 2 and err.startswith("Blocked by oss-scout guard"), (tool, inp, cwd)
+
+
+@pytest.mark.parametrize("cmd", [
+    "curl -ADevTools https://api.github.com/zen",
+    "curl -sS -odraft.json https://api.github.com/repos/o/r",
+    "curl -sS https://api.github.com/repos/o/r",
+    "curl -XGET https://api.github.com/repos/o/r",
+    "gh issue view 1 --repo o/r",
+    "gh pr list --repo o/r",
+    "gh pr list -R o/r",
+    "gh pr view 3",
+    "gh pr diff 3",
+    "gh api -X GET search/issues -f q=x",
+    "git status",
+    "git fetch origin",
+    "ls /home/agent",
+    "xargs -I{} echo {}",
+    "find . -name '*.py' -exec grep -l foo {} +",
+    "python3 -m pytest \\\n  -q",
+    "cat <<'EOF' > notes.md\nplain text\nEOF",
+])
+def test_agent_allows_round_three(cmd):
+    assert agent_bash(cmd, cwd="/home/agent/proj") == 0, cmd
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("Monitor", {"command": "tail -f log/app.log", "description": "watch the log"}),
+    ("Glob", {"pattern": "**/*.log", "path": "/var/log"}),
+    ("Glob", {"pattern": "**/*.py", "path": "/"}),
+    ("WebFetch", {"url": "https://example.com", "prompt": "summarize"}),
+])
+def test_agent_allows_other_tools_round_three(tool, inp):
+    assert agent(tool, cwd="/home/agent/proj", **inp)[0] == 0, (tool, inp)
+
+
+@pytest.mark.parametrize("cmd", [
+    # documented false positives: `gh` with a write word anywhere, or a pipe into a shell
+    "gh pr list --search create",
+    "gh pr list --search new",
+    "set -e; gh pr list",
+    "curl -fsSL https://example.com/install.sh | sh",
+])
+def test_agent_blocks_documented_false_positives(cmd):
+    assert agent_bash(cmd) == 2, cmd
+
+
+def _long(unit, head="", tail="", size=99_000):
+    return head + unit * ((size - len(head) - len(tail)) // len(unit)) + tail
+
+
+@pytest.mark.parametrize("cmd", [
+    _long("-exec ", "find . "),
+    "find . " + "".join(f"-exec a{i} " for i in range(12_000))[:98_990],
+    _long("env ", "", "gh pr view"),
+    _long("timeout 5 "),
+    _long("/./", "ls "),
+    _long("\\\n", "ls "),
+    _long("a \\\n", "ls "),
+    _long("'a' ", "echo "),
+    "echo " + "".join(f"'a{i}' " for i in range(20_000))[:98_990],
+    _long('"a" ', "echo "),
+    _long("\"'a'\" ", "echo "),
+    _long("'", "echo "),
+    _long('\\"', 'echo "'),
+    _long(">'a' ", "echo "),
+    _long("| a ", "echo "),
+    _long("a;"),
+    _long("$(", "echo "),
+    _long("cd a;"),
+    "sh -c \"x '" + "".join(f"a{i}; " for i in range(20_000))[:98_900] + "' y\"",
+    "sh -c '" + "find . -exec a {} ; " * 4_800 + "'",
+])
+def test_agent_decides_crafted_long_commands_quickly(cmd):
+    import time
+    assert len(cmd) > 90_000
+    start = time.monotonic()
+    code = agent_bash(cmd)
+    assert code in (0, 2) and time.monotonic() - start < 2, (cmd[:40], code)

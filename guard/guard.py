@@ -71,9 +71,11 @@ def split_commands(cmd: str) -> list[list[str]]:
             toks = shlex.split(p, comments=True)
         except ValueError:
             toks = p.split()
-        # drop leading env assignments, sudo, time, etc.
-        while toks and (re.match(r"^\w+=", toks[0]) or toks[0] in {"sudo", "time", "env", "command", "exec", "nohup"}):
-            toks = toks[1:]
+        # drop leading env assignments, sudo, time, etc. (counted first, so a long run of them stays fast)
+        i = 0
+        while i < len(toks) and (re.match(r"^\w+=", toks[i]) or toks[i] in {"sudo", "time", "env", "command", "exec", "nohup"}):
+            i += 1
+        toks = toks[i:]
         if toks:
             out.append(toks)
     return out
@@ -158,9 +160,8 @@ def check_http(toks: list[str]) -> None:
         block("HTTP write to GitHub")
 
 
-def check_bash(cmd: str, cwd: str | None, scripted: bool = True) -> None:
-    # `scripted=False`: the agent profile runs its own linear-time copy of this first rule
-    if scripted and re.search(r"api\.github\.com", cmd) and re.search(r"requests\.(post|patch|put|delete)|urlopen\(.*data=|method=['\"](POST|PATCH|PUT|DELETE)", cmd, re.I):
+def check_bash(cmd: str, cwd: str | None) -> None:
+    if re.search(r"api\.github\.com", cmd) and re.search(r"requests\.(post|patch|put|delete)|urlopen\(.*data=|method=['\"](POST|PATCH|PUT|DELETE)", cmd, re.I):
         block("scripted HTTP write to GitHub")
     here = cwd
     for toks in split_commands(cmd):
@@ -191,7 +192,8 @@ def check_mcp(name: str) -> None:
 # It errs on blocking. The first layer reads the whole command as plain text and
 # does not try to understand the shell, so pipes, heredocs, `$( )` and `{ }` all
 # look the same to it. A harmless command that merely mentions `git` and `push`,
-# or `sudo`, is blocked too (put such text in a file and use `git commit -F`).
+# or `sudo`, or `gh` and `create`, is blocked too (put such text in a file and
+# use `git commit -F`).
 #
 # Every regex here takes linear time, and longer text is blocked unread, so a
 # crafted command cannot make the hook time out.
@@ -208,12 +210,12 @@ def word(*names: str) -> str:
     return r"(?<![\w.-])(?:" + "|".join(names) + r")(?![\w.-])"
 
 
-GIT = re.compile(word("git"))
+GIT = re.compile(word(r"git(?:\.exe)?"))
 PUSH = re.compile(word("push"))
 GIT_ALIAS = re.compile(r"(?<![\w./-])alias\.", re.I)     # `alias.p=push`, not `src/alias.py`
 HOLT = re.compile(word("holt"))
 CREDENTIALS = re.compile(word("credentials"))
-HOLT_PARENT = re.compile(word("etc", "run", "lib", "srv"))
+HOLT_PARENT = re.compile(word("etc", "run", "lib", "srv", "var"))
 RUN = re.compile(word("run"))
 TRIPWIRES = [
     (re.compile(word("git-push", "(?:git-)?(?:send-pack|http-push|receive-pack)")), PUSH_MESSAGE),
@@ -225,12 +227,40 @@ TRIPWIRES = [
 ]
 NC = re.compile(word(r"nc(?:\.openbsd|\.traditional)?", "ncat", "netcat"))
 UNIX_FLAG = re.compile(r"(?<![\w-])-[A-Za-z]*U|--unixsock")
+
+# GitHub writes as text: `gh` with any word that names a write, in any order and any case
+GH = re.compile(word(r"gh(?:\.exe)?"), re.I)
+GH_WRITE = re.compile(word(
+    "create", "new", "comment", "review", "merge", "close", "reopen", "edit", "delete", "fork", "ready",
+    "lock", "unlock", "transfer", "archive", "unarchive", "rename", "sync", "set", "upload", "enable",
+    "disable", "cancel", "rerun", "pin", "unpin", "develop", "remove", "revert", "update-branch",
+    "delete-asset", "approve", "login", "logout", "refresh", "stop", "link", "unlink", "copy",
+    "mark-template", "item-add", "item-archive", "item-create", "item-delete", "item-edit",
+    "field-create", "field-delete", "deploy-key", "ssh-key", "gpg-key", "secret", "variable"), re.I)
+GH_WORKFLOW = re.compile(word("workflow"), re.I)          # `gh workflow run` starts a workflow
+GH_API = re.compile(word("api"), re.I)
+# `gh api` method in any spelling: `-X POST`, `-XPOST`, `-X=POST`, `-iX POST`, `--method=post`
+GH_API_METHOD = re.compile(r"(?<![\w-])(?:-[A-Za-z]*?X|--method)(?:[\s=]+|(?=\S))([^\s;&|()<>]*)")
+GH_API_BODY = re.compile(r"(?<![\w-])(?:-[ih]*[fF]|--(?:field|raw-field|input)(?![\w-]))")
+GITHUB_HOST = re.compile(r"github\.com|githubusercontent", re.I)
+HTTPIE = re.compile(r"(?<![\w.-])(?:https?|xhs?|httpie)(?![\w.:/-])")
+# a shell that could run text piped or fed into it
+SHELL_WORD = re.compile(word("sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish", "pwsh", "powershell",
+                             "source", "iex", "invoke-expression") + r"|(?<![\w.-])\w*sh\.exe", re.I)
+PIPE_SEGMENT = re.compile(r"(?<!\|)\|&?(?!\|)([^|;&\n]*)")
+FEED = re.compile(r"<[<(]")                          # `<<EOF`, `<<<`, `<(...)`
+RUNNER = re.compile(r"\w+=.*|-.*|\d+[a-z]?|env|exec|command|nohup|setsid|timeout|nice|ionice|stdbuf|xargs|time"
+                    r"|strace|ltrace|unbuffer|sudo|doas")
+
 HOLT_FOLDERS = ["/run/holt", "/var/lib/holt", "/etc/holt", "/srv/holt", "/run/credentials",
                 "/var/run/holt", "/var/run/credentials"]
 HOLT_DIRS = ["/var", "/run", "/etc", "/srv"]      # a session in (or below) these, or in `/`, may not name Holt
 FILE_TOOLS = {"Read", "Edit", "MultiEdit", "Write", "NotebookEdit", "NotebookRead", "LS", "Grep", "Glob"}
 # a quoted string (`'...'`, `"..."`, `$'...'`); a backslash outside quotes escapes the next character
 QUOTED = re.compile(r"""\\[\s\S]|\$'((?:[^'\\]|\\[\s\S])*)'|'([^']*)'|"((?:[^"\\]|\\[\s\S])*)\"""")
+# a redirect and its target (`2>&1`, `> file`, `>'file'`, `<<EOF`); a quoted target goes with it
+REDIRECT = re.compile(r"""(?<!\d)\d*[<>]+&?\s*(?:\d+-?|(?:[^\s;&|()<>'"]|'[^']*'|"(?:[^"\\]|\\[\s\S])*")+)?""")
+PLAIN = re.compile(r"""[^'"\\;&|()<>`$\n]*""")      # text the shell would split on spaces alone
 
 # programs that run another command given in their arguments, and the options
 # of theirs that take a value (so the value is not mistaken for the command)
@@ -238,11 +268,17 @@ WRAPPERS = {
     "env": {"-u", "--unset", "-C", "--chdir"}, "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"}, "xargs": {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a"},
     "stdbuf": {"-i", "-o", "-e"}, "time": {"-f", "-o"}, "exec": {"-a"}, "nohup": set(), "command": set(),
+    "setsid": set(), "ionice": {"-c", "-n", "-p", "-P", "-u"}, "unbuffer": set(), "chronic": set(),
+    "strace": {"-o", "-e", "-p", "-s", "-E", "-u", "-a", "-b", "-I", "-O", "-P", "-S", "-X"},
+    "ltrace": {"-o", "-e", "-p", "-s", "-E", "-u", "-a", "-n", "-x", "-l"},
     # shell keywords that can come before a command
     "{": set(), "!": set(), "if": set(), "then": set(), "else": set(), "elif": set(), "do": set(),
     "while": set(), "until": set(),
 }
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+HTTPIE_PROGRAMS = {"http", "https", "xh", "xhs", "httpie"}
+CURL_VALUED = set("AbcCdDeEFHKmoPQrtTuUwxXyYz")     # curl's short options that take a value
+GH_API_VALUED = set("HpqtXfF")                       # and gh api's
 
 
 def agent_block(reason: str) -> None:
@@ -250,7 +286,7 @@ def agent_block(reason: str) -> None:
 
 
 def names_holt(text: str, in_holt_dir: bool = False) -> bool:
-    """Does `text` name Holt's folders or credentials? `holt` with `etc`, `run`, `lib` or `srv`, or
+    """Does `text` name Holt's folders or credentials? `holt` with `etc`, `run`, `lib`, `srv` or `var`, or
     `credentials` with `run`, each as a whole word, so `../../etc/holt` and `/var/run/holt` count.
     In a session folder below /etc, /run, /var or /srv (or in /), the name alone counts."""
     text = re.sub(r"/(?:\.?/)+", "/", text)       # `//` and `/./` are one separator
@@ -258,24 +294,71 @@ def names_holt(text: str, in_holt_dir: bool = False) -> bool:
     return bool((holt or creds) and (in_holt_dir or holt and HOLT_PARENT.search(text) or creds and RUN.search(text)))
 
 
+def gh_api_writes(text: str) -> bool:
+    """Does text with `gh api` in it set a method other than GET, or send body fields without `-X GET`?"""
+    methods = [re.sub(r"""['"\\=]""", "", m[1]).upper() for m in GH_API_METHOD.finditer(text)]
+    if any(m != "GET" for m in methods):
+        return True
+    return bool(GH_API_BODY.search(text) and not methods) or "mutation" in text.lower()
+
+
+def feeds_a_shell(text: str) -> bool:
+    """Is text piped into a shell (`| sh`, `| xargs bash`), or fed to one (`bash <<<`, `sh <<EOF`, `bash <(...)`)?"""
+    for m in PIPE_SEGMENT.finditer(text):
+        for w in m[1].split():
+            w = w.strip("(){}'\"").rsplit("/", 1)[-1]
+            if not RUNNER.fullmatch(w):
+                if SHELL_WORD.fullmatch(w):
+                    return True
+                break
+    for segment in re.split(r"[|;&\n]", text):
+        feed = FEED.search(segment)
+        if feed and SHELL_WORD.search(segment, 0, feed.start()):
+            return True
+    return False
+
+
+def github_text(text: str) -> None:
+    """GitHub writes as plain text, whatever runs them (`setsid gh pr create`, `echo gh pr create | sh`)."""
+    if GH.search(text):
+        if GH_WRITE.search(text) or GH_WORKFLOW.search(text) and RUN.search(text):
+            agent_block("`gh` together with a word that writes to GitHub")
+        if GH_API.search(text) and gh_api_writes(text):
+            agent_block("`gh api` that can write to GitHub")
+    if HTTPIE.search(text) and GITHUB_HOST.search(text):
+        agent_block("httpie or xh to GitHub")
+    if feeds_a_shell(text):
+        agent_block("text piped or fed into a shell cannot be checked")
+
+
 def tripwires(text: str, in_holt_dir: bool = False) -> None:
-    """Block text that mentions a forbidden thing anywhere, however the shell would read it."""
+    """Block text that mentions a forbidden thing anywhere, however the shell would read it. The text
+    is also read with quote marks, backslashes and line continuations removed (`g'i't pu\\sh`)."""
     if len(text) > MAX_TEXT:
         agent_block("text too long to check")
-    git_alias = GIT_ALIAS.search(text) and (GIT.search(text) or "GIT_CONFIG" in text)
-    if (GIT.search(text) and PUSH.search(text)) or git_alias:
-        agent_block(PUSH_MESSAGE)
-    for pattern, reason in TRIPWIRES:
-        if pattern.search(text):
-            agent_block(reason)
-    if NC.search(text) and UNIX_FLAG.search(text):
-        agent_block("`nc -U` can reach Holt's sockets")
-    if names_holt(text, in_holt_dir):
-        agent_block(HOLT_MESSAGE)
+    plain = re.sub(r"\\\n|[\\'\"]", "", text)
+    for text in (text, plain) if plain != text else (text,):
+        git_alias = GIT_ALIAS.search(text) and (GIT.search(text) or "GIT_CONFIG" in text)
+        if (GIT.search(text) and PUSH.search(text)) or git_alias:
+            agent_block(PUSH_MESSAGE)
+        for pattern, reason in TRIPWIRES:
+            if pattern.search(text):
+                agent_block(reason)
+        if NC.search(text) and UNIX_FLAG.search(text):
+            agent_block("`nc -U` can reach Holt's sockets")
+        if names_holt(text, in_holt_dir):
+            agent_block(HOLT_MESSAGE)
+        github_text(text)
 
 
 def in_holt_dir(path: str) -> bool:
     return path == "/" or any(path == d or path.startswith(d + "/") for d in HOLT_DIRS)
+
+
+def folder_in_holt_dir(path: str) -> bool:
+    """`in_holt_dir` for a folder as given and as it really is (symlinks followed)."""
+    path = re.sub(r"^/+", "/", os.path.normpath(path))
+    return in_holt_dir(path) or in_holt_dir(os.path.realpath(path))
 
 
 def inside_holt(path: str, base: str) -> bool:
@@ -303,19 +386,25 @@ def check_agent_paths(tool: str, inp: dict, cwd: str) -> None:
             agent_block("a file path that is not text")
         if inside_holt(value, base):
             agent_block(HOLT_MESSAGE)
-    if pattern is not None:                 # a pattern such as `*/holt/*` in /etc cannot be resolved: read it as text
-        tripwires(os.path.join(searched, pattern))
+    if pattern is not None:
+        # a pattern such as `**/holt/**` cannot be resolved: read it as text, with the session-folder
+        # rule applied to the folder it searches (`/`, `/var`, `/etc` ...)
+        tripwires(os.path.join(searched, pattern), folder_in_holt_dir(searched))
 
 
 def tokenize(cmd: str) -> list[list[str]]:
     """Split a shell line into simple commands, keeping quoted text as one word.
 
-    `sh -c "a; b"` stays one word. `;`, `&`, `|`, `( )`, newlines and backticks
-    separate commands. Redirects (`2>&1`, `> file`) are dropped, never with a quote mark.
+    `sh -c "a; b"` stays one word, and so does `-I{}`. `;`, `&`, `|`, `( )`, newlines and
+    backticks separate commands, and `\\` line continuations are joined first. Redirects
+    (`2>&1`, `> file`, `>'file'`) are dropped, never with a quote mark that is not theirs.
     """
-    cmd = re.sub(r"(?<!\d)\d*[<>]+&?\s*(?:\d+-?|[^\s;&|()<>'\"]+)?", " ", cmd).replace("`", ";").replace("\n", ";")
+    cmd = REDIRECT.sub(" ", cmd.replace("\\\n", "")).replace("`", ";").replace("\n", ";")
+    if PLAIN.fullmatch(cmd):                # nothing to unquote: no need for the slower shell lexer
+        return [cmd.split()] if cmd.split() else []
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lex.commenters = ""
+    lex.whitespace_split = True
     try:
         words = list(lex)
     except ValueError:      # an unbalanced quote: fall back to cruder splitting
@@ -339,7 +428,7 @@ def quoted_parts(cmd: str) -> list[str]:
 @functools.cache
 def simple_commands(cmd: str, depth: int = 0) -> list[list[str]]:
     """Every simple command in `cmd`, also those behind `timeout 5`, `env`, `xargs` and so on,
-    inside `sh -c '...'`, `$( )`, backticks and `find -exec`, and inside every quoted string
+    inside `sh -c '...'`, `$( )`, backticks and every `find -exec`, and inside every quoted string
     (`echo 'gh pr create' | sh`)."""
     if depth > MAX_DEPTH:
         agent_block("commands nested too deeply to check")
@@ -347,17 +436,19 @@ def simple_commands(cmd: str, depth: int = 0) -> list[list[str]]:
     for part in quoted_parts(cmd):
         found += simple_commands(part, depth + 1)
     for toks in tokenize(cmd):
-        while toks:
-            prog = toks[0].rsplit("/", 1)[-1]
-            if re.match(r"^\w+=", toks[0]):
-                toks = toks[1:]
+        start = 0                               # an index, so a long run of wrappers stays fast
+        while start < len(toks):
+            prog = toks[start].rsplit("/", 1)[-1]
+            if re.match(r"^\w+=", toks[start]):
+                start += 1
             elif prog in WRAPPERS:
-                i, valued = 1, WRAPPERS[prog]
+                i, valued = start + 1, WRAPPERS[prog]
                 while i < len(toks) and (toks[i] in valued or toks[i].startswith("-") or re.match(r"^\w+=", toks[i])):
                     i += 2 if toks[i] in valued else 1
-                toks = toks[i + (prog == "timeout"):]     # `timeout` is followed by a duration
+                start = i + (prog == "timeout")     # `timeout` is followed by a duration
             else:
                 break
+        toks = toks[start:]
         if not toks:
             continue
         found.append(toks)
@@ -370,9 +461,10 @@ def simple_commands(cmd: str, depth: int = 0) -> list[list[str]]:
         elif prog == "eval":
             found += simple_commands(" ".join(toks[1:]), depth + 1)
         elif prog == "find":
-            for i, t in enumerate(toks):
-                if t in {"-exec", "-execdir", "-ok", "-okdir"}:
-                    found += simple_commands(shlex.join(toks[i + 1:]), depth + 1)
+            # each `-exec ... ;` (or `+`) once, so many of them stay fast and a later one is checked too
+            marks = [i for i, t in enumerate(toks) if t in {"-exec", "-execdir", "-ok", "-okdir"}] + [len(toks)]
+            for a, b in zip(marks, marks[1:]):
+                found += simple_commands(shlex.join(toks[a + 1:b]), depth + 1)
     return found
 
 
@@ -384,20 +476,111 @@ def check_agent_scripted(cmd: str) -> None:
         block("scripted HTTP write to GitHub")
 
 
-def check_agent_command(toks: list[str]) -> None:
-    """Agent-only GitHub rules for one simple command: gh's `new`, and more HTTP write flags."""
+def check_cloud_commands(cmd: str) -> None:
+    """The cloud profile's command rules, as `check_bash` runs them, in linear time: without its
+    scripted-write regex (see above) and its `cd` tracking, which only serves the one push the
+    agent may never make."""
+    for toks in split_commands(cmd):
+        check_cloud_command(toks)
+
+
+def check_cloud_command(toks: list[str]) -> None:
+    """The cloud rules for one simple command. Any `git push` that got this far blocks."""
     prog = toks[0].rsplit("/", 1)[-1]
     if prog == "gh":
-        check_gh(["create" if t == "new" else t for t in toks])      # `gh pr new` is `gh pr create`
-    if prog not in {"curl", "wget"} or not re.search(r"github\.com|githubusercontent", " ".join(toks)):
+        check_gh(toks)
+    elif prog == "git":
+        if "push" in toks:
+            agent_block(PUSH_MESSAGE)
+        check_git(toks, None)
+    elif prog in {"curl", "wget", "http", "https", "xh"}:
+        check_http(toks)
+
+
+def check_agent_gh(toks: list[str]) -> None:
+    """The cloud `gh` rules with `-R`/`--repo` taken out wherever they are, `new` read as `create`,
+    and `gh api` methods and body fields in every spelling (`-X=POST`, `-fbody=x`, `-iXPOST`)."""
+    args, i = [], 1
+    while i < len(toks):
+        t = toks[i]
+        if t in {"-R", "--repo"}:
+            i += 2
+            continue
+        if not t.startswith(("--repo=", "-R")):
+            args.append("create" if t == "new" else t)     # `gh pr new` is `gh pr create`
+        i += 1
+    check_gh(["gh", *args])
+    if "api" not in args:
+        return
+    rest = args[args.index("api") + 1:]
+    methods, body = [], False
+    for t, after in zip(rest, rest[1:] + [""]):
+        if t.startswith("--"):
+            name, eq, value = t.partition("=")
+            if name == "--method":
+                methods.append(value if eq else after)
+            body = body or name in {"--field", "--raw-field", "--input"}
+        elif t.startswith("-"):
+            for k, c in enumerate(t[1:], 1):
+                body = body or c in "fF"
+                if c == "X":
+                    methods.append(t[k + 1:].lstrip("=") or after)
+                if c in GH_API_VALUED:
+                    break
+    if any(m.upper() != "GET" for m in methods) or body and not methods:
+        block("`gh api` that can write to GitHub")
+
+
+def check_agent_http(prog: str, toks: list[str]) -> None:
+    """curl and wget to a GitHub host (any case): a method other than GET or HEAD, or a body, blocks.
+    curl's short options are read as a cluster, which ends at an option that takes a value
+    (`-sSXPOST` sets a method, `-ADevTools` and `-odraft.json` do not)."""
+    if not GITHUB_HOST.search(" ".join(toks)):
         return
     for t, after in zip(toks, toks[1:] + [""]):
-        flag = re.match(r"-[A-Za-z]*?([XdFT])", t) if prog == "curl" else None    # also in a cluster: -sSXPOST, -sd
-        if t.startswith(("--post-", "--body-")) or flag and flag[1] != "X":      # wget --post-data, --body-file
-            block("HTTP request with a body to GitHub")
-        method = re.match(r"--(?:method|request)(?:=|$)", t) or flag
-        if method and (t[method.end():] or after).upper() not in {"GET", "HEAD"}:
-            block("HTTP write to GitHub")
+        if t.startswith("--"):
+            name, eq, value = t.partition("=")
+            if re.match(r"--(?:data|form|json|upload-file|post-|body-)", name):
+                block("HTTP request with a body to GitHub")
+            if name in {"--method", "--request"} and (value if eq else after).upper() not in {"GET", "HEAD"}:
+                block("HTTP write to GitHub")
+        elif prog == "curl" and t.startswith("-"):
+            for k, c in enumerate(t[1:], 1):
+                if c in "dFT":
+                    block("HTTP request with a body to GitHub")
+                if c == "X" and (t[k + 1:] or after).upper() not in {"GET", "HEAD"}:
+                    block("HTTP write to GitHub")
+                if c in CURL_VALUED:
+                    break
+
+
+def check_agent_git(toks: list[str]) -> None:
+    """The cloud remote rules in any case (`git config REMOTE.origin.url x`) and after any git option."""
+    args, i = [t.lower() for t in toks[1:]], 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in {"-c", "--git-dir", "--work-tree", "--namespace", "--config-env"} else 1
+    sub, rest = (args[i], [a for a in args[i + 1:] if not a.startswith("-")]) if i < len(args) else ("", [])
+    if sub == "remote" and rest[:1] and rest[0] in {"add", "set-url", "rename"}:
+        block("changing git remotes")
+    if sub == "config" and any("url." in a or "remote." in a or "pushurl" in a or "insteadof" in a for a in rest):
+        block("rewriting remote URLs via git config")
+
+
+def check_agent_command(toks: list[str]) -> None:
+    """Agent-only GitHub rules for one simple command. Each program is looked for anywhere in the command,
+    so an unknown wrapper in front (`strace -f curl ...`) does not hide it."""
+    first: dict[str, int] = {}
+    for i, t in enumerate(toks):
+        first.setdefault(re.sub(r"\.exe$", "", re.split(r"[/\\]", t)[-1].lower()), i)
+    if "gh" in first:
+        check_agent_gh(toks[first["gh"]:])
+    for prog in ("curl", "wget"):
+        if prog in first:
+            check_agent_http(prog, toks[first[prog]:])
+    if HTTPIE_PROGRAMS & first.keys() and GITHUB_HOST.search(" ".join(toks)):
+        block("httpie or xh to GitHub")
+    if "git" in first:
+        check_agent_git(toks[first["git"]:])
 
 
 def walk_strings(value):
@@ -417,7 +600,11 @@ def check_agent_event(event) -> None:
     """The agent profile's rules, in order: a malformed call, Holt's folders, forbidden text and
     paths, then every cloud rule, also on the commands hidden inside the line. (The text rules
     come before the cloud rules so that a push is always refused with "pushes are done by the
-    owner".)"""
+    owner".)
+
+    Any tool with a `command` text (`Bash`, `Monitor`, `PowerShell`, a tool this guard has never
+    heard of) gets the full shell checks. Every tool but the file tools gets the text rules on
+    every string it is given."""
     if not isinstance(event, dict):
         agent_block("the tool call is not a JSON object")
     tool, inp, cwd = event.get("tool_name"), event.get("tool_input"), event.get("cwd")
@@ -428,25 +615,29 @@ def check_agent_event(event) -> None:
     cmd = inp.get("command")
     if tool == "Bash" and not isinstance(cmd, str):
         agent_block("the Bash tool call has no command text")
+    shell = isinstance(cmd, str)
     here = re.sub(r"^/+", "/", os.path.abspath(cwd or "."))
     if inside_holt(".", here):
         agent_block(HOLT_MESSAGE)
-    if tool == "Bash":
-        tripwires(cmd, in_holt_dir(here) or in_holt_dir(os.path.realpath(here)))
-    elif tool.startswith("mcp__"):
-        for s in walk_strings(inp):
-            tripwires(s)
-    elif tool in FILE_TOOLS:
+    if shell:
+        tripwires(cmd, folder_in_holt_dir(here))
+    if tool in FILE_TOOLS:
         check_agent_paths(tool, inp, here)
+    else:
+        for s in walk_strings(inp):
+            if s is not cmd:
+                tripwires(s)
     # everything the cloud profile blocks
-    if tool == "Bash":
-        commands = simple_commands(cmd)
-        for text in [cmd, *map(shlex.join, commands)]:
-            check_agent_scripted(text)
-            check_bash(text, cwd, scripted=False)
+    if shell:
+        # each distinct command once: a string can be found both as a quoted part and inside `sh -c`
+        commands = list(map(list, dict.fromkeys(map(tuple, simple_commands(cmd)))))
+        check_agent_scripted(cmd)
+        check_cloud_commands(cmd)
         for toks in commands:
+            check_agent_scripted(shlex.join(toks))
+            check_cloud_command(toks)
             check_agent_command(toks)
-    elif tool.startswith("mcp__"):
+    if tool.startswith("mcp__"):
         check_mcp(tool)
 
 
