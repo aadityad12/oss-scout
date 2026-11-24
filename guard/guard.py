@@ -205,6 +205,7 @@ PUSH_MESSAGE = "pushes are done by the owner, not the agent"
 HOLT_MESSAGE = "Holt's folders and credentials are off limits"
 MAX_DEPTH = 4
 MAX_TEXT = 100_000
+MAX_NAMED = 16          # words naming one program (`git`, `curl` ...) in one command
 
 
 def word(*names: str) -> str:
@@ -216,6 +217,7 @@ GIT = re.compile(word(r"git(?:\.exe)?"))
 PUSH = re.compile(word("push"))
 GIT_ALIAS = re.compile(r"(?<![\w./-])alias\.", re.I)     # `alias.p=push`, not `src/alias.py`
 HOLT = re.compile(word("holt"))
+HOLT_HOME = re.compile(r"(?<![\w.-])~holt(?![\w.-])")     # `~holt` is the home of the holt user, /var/lib/holt
 CREDENTIALS = re.compile(word("credentials"))
 HOLT_PARENT = re.compile(word("etc", "run", "lib", "srv", "var"))
 RUN = re.compile(word("run"))
@@ -298,9 +300,12 @@ def agent_block(reason: str) -> None:
 
 def names_holt(text: str, in_holt_dir: bool = False) -> bool:
     """Does `text` name Holt's folders or credentials? `holt` with `etc`, `run`, `lib`, `srv` or `var`, or
-    `credentials` with `run`, each as a whole word, so `../../etc/holt` and `/var/run/holt` count.
+    `credentials` with `run`, each as a whole word, so `../../etc/holt` and `/var/run/holt` count, and
+    so does `~holt` (Holt's home folder) and a path written with `%2F` for `/`.
     In a session folder below /etc, /run, /var or /srv (or in /), the name alone counts."""
-    text = re.sub(r"/(?:\.?/)+", "/", text)       # `//` and `/./` are one separator
+    text = re.sub(r"/(?:\.?/)+", "/", re.sub(r"%2f", "/", text, flags=re.I))   # `%2F` is `/`; `//` and `/./` are one
+    if HOLT_HOME.search(text):
+        return True
     holt, creds = HOLT.search(text), CREDENTIALS.search(text)
     return bool((holt or creds) and (in_holt_dir or holt and HOLT_PARENT.search(text) or creds and RUN.search(text)))
 
@@ -401,12 +406,18 @@ def check_agent_paths(tool: str, inp: dict, cwd: str) -> None:
             continue
         if not isinstance(value, str):
             agent_block("a file path that is not text")
-        if inside_holt(value, base):
+        if inside_holt(value, base) or HOLT_HOME.search(value):
             agent_block(HOLT_MESSAGE)
     if pattern is not None:
         # a pattern such as `**/holt/**` cannot be resolved: read it as text, with the session-folder
-        # rule applied to the folder it searches (`/`, `/var`, `/etc` ...)
-        tripwires(os.path.join(searched, pattern), folder_in_holt_dir(searched))
+        # rule applied to the folder it searches (`/`, `/var`, `/etc` ...). Only Holt's names matter
+        # here: a pattern runs nothing, so `**/sudo/*.py` is fine.
+        text = os.path.join(searched, pattern)
+        if len(text) > MAX_TEXT:
+            agent_block("text too long to check")
+        in_dir = folder_in_holt_dir(searched)
+        if names_holt(text, in_dir) or names_holt(re.sub(r"\\\n|[\\'\"]", "", text), in_dir):
+            agent_block(HOLT_MESSAGE)
 
 
 def tokenize(cmd: str) -> list[list[str]]:
@@ -544,18 +555,23 @@ def check_agent_gh(toks: list[str]) -> None:
 def check_agent_http(prog: str, toks: list[str]) -> None:
     """curl and wget when the command names a GitHub host (any case): a method other than GET or HEAD,
     or a body, blocks. curl's short options are read as a cluster, which ends at an option that takes
-    a value (`-sSXPOST` sets a method, `-ADevTools` and `-odraft.json` do not)."""
+    a value (`-sSXPOST` sets a method, `-ADevTools` and `-odraft.json` do not). A config file (`-K`,
+    `--config`) can hold either, unseen, so it blocks too."""
     for t, after in zip(toks, toks[1:] + [""]):
         if t.startswith("--"):
             name, eq, value = t.partition("=")
             if re.match(r"--(?:data|form|json|upload-file|post-|body-)", name):
                 block("HTTP request with a body to GitHub")
+            if re.fullmatch(r"--conf(?:i(?:g)?)?", name):
+                block("a curl config file can hold a method or body for GitHub")
             if name in {"--method", "--request"} and (value if eq else after).upper() not in {"GET", "HEAD"}:
                 block("HTTP write to GitHub")
         elif prog == "curl" and t.startswith("-"):
             for k, c in enumerate(t[1:], 1):
                 if c in "dFT":
                     block("HTTP request with a body to GitHub")
+                if c == "K":
+                    block("a curl config file can hold a method or body for GitHub")
                 if c == "X" and (t[k + 1:] or after).upper() not in {"GET", "HEAD"}:
                     block("HTTP write to GitHub")
                 if c in CURL_VALUED:
@@ -575,21 +591,27 @@ def check_agent_git(toks: list[str]) -> None:
 
 
 def check_agent_command(toks: list[str], github: bool) -> None:
-    """Agent-only GitHub rules for one simple command. Each program is looked for anywhere in the command,
-    so an unknown wrapper in front (`strace -f curl ...`) does not hide it. `github` says whether the
-    whole command line names a GitHub host, so `echo <GitHub URL> | xargs curl -d x` counts."""
-    first: dict[str, int] = {}
+    """Agent-only GitHub rules for one simple command. Every word that is one of these programs is
+    taken as the program, so an unknown wrapper in front (`strace -f curl ...`, `flock /tmp/git git
+    remote ...`) does not hide it. `github` says whether the whole command line names a GitHub host,
+    so `echo <GitHub URL> | xargs curl -d x` counts. More than MAX_NAMED words naming the same program
+    are blocked unread, which keeps the work linear."""
+    at: dict[str, list[int]] = {}
     for i, t in enumerate(toks):
-        first.setdefault(re.sub(r"\.exe$", "", re.split(r"[/\\]", t)[-1].lower()), i)
-    if "gh" in first:
-        check_agent_gh(toks[first["gh"]:])
+        name = re.sub(r"\.exe$", "", re.split(r"[/\\]", t)[-1].lower())
+        if name in {"gh", "curl", "wget", "git"} | HTTPIE_PROGRAMS:
+            at.setdefault(name, []).append(i)
+    if any(len(v) > MAX_NAMED for v in at.values()):
+        agent_block("too many mentions of one program to check")
+    for i in at.get("gh", []):
+        check_agent_gh(toks[i:])
     for prog in ("curl", "wget"):
-        if prog in first and github:
-            check_agent_http(prog, toks[first[prog]:])
-    if HTTPIE_PROGRAMS & first.keys() and github:
+        for i in at.get(prog, []) if github else []:
+            check_agent_http(prog, toks[i:])
+    if HTTPIE_PROGRAMS & at.keys() and github:
         block("httpie or xh to GitHub")
-    if "git" in first:
-        check_agent_git(toks[first["git"]:])
+    for i in at.get("git", []):
+        check_agent_git(toks[i:])
 
 
 def walk_strings(value):

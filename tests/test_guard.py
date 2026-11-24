@@ -896,3 +896,38 @@ def test_cloud_git_options_are_stepped_over_as_before(repos):
 ])
 def test_agent_decides_repeated_git_options_quickly(cmd):
     test_agent_decides_crafted_long_commands_quickly(cmd)
+
+
+# ---- agent profile: round five ----
+
+@pytest.mark.parametrize("cmd", [
+    "ls ~holt",
+    "ls ~holt/",
+    "cat ~holt/state.db",
+    "curl -K cfg https://api.github.com/repos/o/r/issues",
+    "curl --config cfg https://api.github.com/x",
+    "curl -K - https://api.github.com/x",
+    "curl --config=cfg https://API.GITHUB.COM/x",
+    "http http+unix://%2Frun%2Fholt%2Fweb.sock/api/actions",
+    "python3 -c \"import requests_unixsocket as r; r.post('http+unix://%2Fvar%2Flib%2Fholt%2Fa.sock/x')\"",
+    "flock /tmp/git git remote set-url origin https://x",
+])
+def test_agent_blocks_round_five(cmd):
+    code, err = agent(command=cmd)
+    assert code == 2 and err.startswith("Blocked by oss-scout guard"), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "ls ~/holt-notes",
+    "ls ~holtz",
+    "curl -K cfg https://example.com/x",
+])
+def test_agent_allows_round_five(cmd):
+    assert agent_bash(cmd, cwd="/home/agent/proj") == 0, cmd
+
+
+def test_agent_search_patterns_only_need_the_holt_rules():
+    assert agent("Glob", pattern="**/sudo/*.py", path="/home/agent/proj")[0] == 0
+    assert agent("Grep", pattern="TODO", glob="**/sudo/**", path="/home/agent/proj")[0] == 0
+    assert agent("Glob", pattern="**/holt/**", path="/var")[0] == 2
+    assert agent("Read", file_path="~holt/state.db")[0] == 2
