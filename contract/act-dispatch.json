@@ -1,0 +1,13 @@
+{
+  "contract_version": 1,
+  "workflow": {"file": "act.yml", "ref": "main", "run_name": "act: {action} {key}"},
+  "inputs": ["key", "action", "title", "body_b64", "dry_run"],
+  "actions": ["submit", "post", "followup", "approve", "later", "skip", "prepare", "pair", "unpair", "feature", "unfeature", "summary", "refresh"],
+  "no_text_actions": ["prepare", "pair", "unpair", "feature", "unfeature", "refresh"],
+  "summary_action": "summary",
+  "key_pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$",
+  "limits": {"max_title": 256, "max_body": 60000, "max_dispatch_body_b64": 60000, "max_summary": 200, "max_request_bytes": 200000},
+  "snooze_days": 3,
+  "modes": ["draft", "pair", "own"],
+  "legacy_modes": {"guide": "pair"}
+}

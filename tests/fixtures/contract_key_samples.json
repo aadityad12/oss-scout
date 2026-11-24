@@ -1,0 +1,20 @@
+[
+  {"key": "o/r#1", "valid": true},
+  {"key": "a.b/c-d_e#123", "valid": true},
+  {"key": "Owner-1/Repo.js#9007199254740993", "valid": true},
+  {"key": "o/r#", "valid": false},
+  {"key": "o/r", "valid": false},
+  {"key": "#1", "valid": false},
+  {"key": "/r#1", "valid": false},
+  {"key": "o/#1", "valid": false},
+  {"key": "o r/x#1", "valid": false},
+  {"key": "o/r#1x", "valid": false},
+  {"key": "o/r#-1", "valid": false},
+  {"key": "o/r/s#1", "valid": false},
+  {"key": "../x#1", "valid": true},
+  {"key": "o/r#1\n", "valid": false},
+  {"key": "\no/r#1", "valid": false},
+  {"key": " o/r#1", "valid": false},
+  {"key": "o/r#１", "valid": false},
+  {"key": "", "valid": false}
+]
