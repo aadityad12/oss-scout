@@ -931,3 +931,40 @@ def test_agent_search_patterns_only_need_the_holt_rules():
     assert agent("Grep", pattern="TODO", glob="**/sudo/**", path="/home/agent/proj")[0] == 0
     assert agent("Glob", pattern="**/holt/**", path="/var")[0] == 2
     assert agent("Read", file_path="~holt/state.db")[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "wget -e post_data=x https://api.github.com/repos/o/r/issues",
+    "wget -qe post_data=x https://api.github.com/x",
+    "wget -epost_data=x https://api.github.com/x",
+    "wget --execute=method=DELETE https://api.github.com/x",
+    "wget --execute post_data=x https://api.github.com/x",
+    "wget --exe=post_data=x https://api.github.com/x",
+    "wget --meth=DELETE https://api.github.com/x",
+    "wget --metho DELETE https://API.GITHUB.COM/x",
+])
+def test_agent_blocks_wget_execute_and_prefixes(cmd):
+    code, err = agent(command=cmd)
+    assert code == 2 and err.startswith("Blocked by oss-scout guard"), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "wget -q https://api.github.com/zen",
+    "wget -O out.json https://api.github.com/repos/o/r",
+    "wget -e robots=off https://example.com/x",
+    "wget --mirror https://example.com",
+])
+def test_agent_allows_plain_wget(cmd):
+    assert agent_bash(cmd) == 0, cmd
+
+
+def test_agent_wget_config_message_names_wget():
+    code, err = agent(command="wget --config=c https://api.github.com/x")
+    assert code == 2 and "wget config" in err and "curl" not in err
+
+
+def test_agent_max_named_boundary():
+    ok = "stat " + " ".join(["/a/git"] * 15) + " git"      # 16 words naming git
+    assert agent_bash(ok) == 0
+    code, err = agent(command=ok + " git")                  # 17
+    assert code == 2 and "too many mentions" in err

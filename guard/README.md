@@ -56,6 +56,7 @@ This is a speed bump for a well-behaved agent, not a sandbox. It is a hard stop 
 What it does not catch, because it never runs anything:
 
 - strings built at run time (`"gi"+"t pu"+"sh"`, `$(printf 'g%s' h)`, a variable that holds the command, `$X$Y`, `$'\x67h'`, a script written by one command and run by the next)
+- config files that curl and wget read on their own (`~/.curlrc`, `CURL_HOME`, `~/.wgetrc`, `WGETRC`, or a `-K` file that holds the GitHub URL itself)
 - globs and patterns for a path (`/etc/ho*`, `/etc/h?lt`)
 - obfuscation such as base64 or hex that is decoded and run, unless it is piped or fed into a shell (`base64 -d | python3` still passes)
 - a push or GitHub write made by a library inside a script, such as GitPython's `repo.remote().push()`, PyGithub or Octokit, `httpx.post(...)` or `fetch(..., {method: 'POST'})`, or any script file it is not shown

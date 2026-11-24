@@ -556,16 +556,22 @@ def check_agent_http(prog: str, toks: list[str]) -> None:
     """curl and wget when the command names a GitHub host (any case): a method other than GET or HEAD,
     or a body, blocks. curl's short options are read as a cluster, which ends at an option that takes
     a value (`-sSXPOST` sets a method, `-ADevTools` and `-odraft.json` do not). A config file (`-K`,
-    `--config`) can hold either, unseen, so it blocks too."""
+    `--config`) can hold either, unseen, so it blocks too. wget also takes `-e`/`--execute` (`-e post_data=x`)
+    and any unique start of a long option (`--exe`, `--meth`), which block the same way."""
     for t, after in zip(toks, toks[1:] + [""]):
         if t.startswith("--"):
             name, eq, value = t.partition("=")
             if re.match(r"--(?:data|form|json|upload-file|post-|body-)", name):
                 block("HTTP request with a body to GitHub")
             if re.fullmatch(r"--conf(?:i(?:g)?)?", name):
-                block("a curl config file can hold a method or body for GitHub")
-            if name in {"--method", "--request"} and (value if eq else after).upper() not in {"GET", "HEAD"}:
+                block(f"a {prog} config file can hold a method or body for GitHub")
+            if prog == "wget" and len(name) >= 5 and "--execute".startswith(name):
+                block("wget -e/--execute can set a method or body for GitHub")
+            is_method = name in {"--method", "--request"} or (prog == "wget" and len(name) >= 6 and "--method".startswith(name))
+            if is_method and (value if eq else after).upper() not in {"GET", "HEAD"}:
                 block("HTTP write to GitHub")
+        elif prog == "wget" and t.startswith("-") and "e" in t[1:]:
+            block("wget -e/--execute can set a method or body for GitHub")
         elif prog == "curl" and t.startswith("-"):
             for k, c in enumerate(t[1:], 1):
                 if c in "dFT":
