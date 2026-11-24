@@ -567,7 +567,7 @@ def check_agent_http(prog: str, toks: list[str]) -> None:
                 block(f"a {prog} config file can hold a method or body for GitHub")
             if prog == "wget" and len(name) >= 5 and "--execute".startswith(name):
                 block("wget -e/--execute can set a method or body for GitHub")
-            is_method = name in {"--method", "--request"} or (prog == "wget" and len(name) >= 6 and "--method".startswith(name))
+            is_method = name in {"--method", "--request"} or (prog == "wget" and len(name) >= 4 and "--method".startswith(name))
             if is_method and (value if eq else after).upper() not in {"GET", "HEAD"}:
                 block("HTTP write to GitHub")
         elif prog == "wget" and t.startswith("-") and "e" in t[1:]:

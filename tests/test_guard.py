@@ -942,6 +942,9 @@ def test_agent_search_patterns_only_need_the_holt_rules():
     "wget --exe=post_data=x https://api.github.com/x",
     "wget --meth=DELETE https://api.github.com/x",
     "wget --metho DELETE https://API.GITHUB.COM/x",
+    "wget --me=DELETE https://api.github.com/repos/o/r",
+    "wget --met=DELETE https://api.github.com/repos/o/r",
+    "wget --met DELETE https://api.github.com/repos/o/r",
 ])
 def test_agent_blocks_wget_execute_and_prefixes(cmd):
     code, err = agent(command=cmd)
@@ -953,6 +956,8 @@ def test_agent_blocks_wget_execute_and_prefixes(cmd):
     "wget -O out.json https://api.github.com/repos/o/r",
     "wget -e robots=off https://example.com/x",
     "wget --mirror https://example.com",
+    "wget --method=GET https://api.github.com/x",
+    "wget --me=GET https://api.github.com/x",
 ])
 def test_agent_allows_plain_wget(cmd):
     assert agent_bash(cmd) == 0, cmd
