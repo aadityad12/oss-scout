@@ -1,6 +1,7 @@
 name: tests
 
 # Runs the Python and Worker tests, including the act dispatch contract checks.
+# They are separate jobs so a failure in one doesn't hide the other's results.
 
 on:
   pull_request:
@@ -11,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -25,9 +26,15 @@ jobs:
 
       - run: python -m pytest -q
 
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Worker tests
-        run: cd worker && node --test
+        run: cd worker && npm test

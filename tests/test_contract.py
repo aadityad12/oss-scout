@@ -53,16 +53,19 @@ def test_key_pattern_accepts_and_rejects_what_the_scout_does():
         key, valid = sample["key"], sample["valid"]
         # fullmatch, because Python's `$` also matches before a trailing newline
         assert bool(pattern.fullmatch(key)) == valid, key
-        # the scout itself calls KEY.match, which also accepts a trailing newline; the Worker
-        # rejects such keys first, so the scout never sees one
+        # the scout itself calls KEY.match, which also accepts a trailing newline. The Worker
+        # rejects such keys, but a direct CLI call or a manual workflow dispatch skips the Worker,
+        # and the workflow's grep check and KEY.match would accept a single trailing newline
         assert bool(act.KEY.fullmatch(key)) == valid, key
         assert bool(pattern.match(key)) == bool(act.KEY.match(key)), key
 
 
 def test_the_workflow_checks_keys_with_the_contract_pattern():
-    patterns = re.findall(r"grep -Eq '([^']*)'", datarepo.ACT_YML)
-    assert patterns, "no grep key check in ACT_YML"
-    assert set(patterns) == {CONTRACT["key_pattern"]}
+    # only the key check itself: echo "$KEY" | grep -Eq '...'
+    for name, text in (("ACT_YML", datarepo.ACT_YML), ("TRACK_YML", datarepo.TRACK_YML)):
+        patterns = re.findall(r"""echo "\$(?:KEY|key)" \| grep -Eq '([^']*)'""", text)
+        assert patterns, f"no key check in {name}"
+        assert set(patterns) == {CONTRACT["key_pattern"]}, name
 
 
 def test_modes_match_the_briefings():
