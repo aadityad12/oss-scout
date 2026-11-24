@@ -26,6 +26,7 @@ Any other argument, or a bad profile name, blocks everything (fail closed).
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -157,8 +158,9 @@ def check_http(toks: list[str]) -> None:
         block("HTTP write to GitHub")
 
 
-def check_bash(cmd: str, cwd: str | None) -> None:
-    if re.search(r"api\.github\.com", cmd) and re.search(r"requests\.(post|patch|put|delete)|urlopen\(.*data=|method=['\"](POST|PATCH|PUT|DELETE)", cmd, re.I):
+def check_bash(cmd: str, cwd: str | None, scripted: bool = True) -> None:
+    # `scripted=False`: the agent profile runs its own linear-time copy of this first rule
+    if scripted and re.search(r"api\.github\.com", cmd) and re.search(r"requests\.(post|patch|put|delete)|urlopen\(.*data=|method=['\"](POST|PATCH|PUT|DELETE)", cmd, re.I):
         block("scripted HTTP write to GitHub")
     here = cwd
     for toks in split_commands(cmd):
@@ -190,10 +192,15 @@ def check_mcp(name: str) -> None:
 # does not try to understand the shell, so pipes, heredocs, `$( )` and `{ }` all
 # look the same to it. A harmless command that merely mentions `git` and `push`,
 # or `sudo`, is blocked too (put such text in a file and use `git commit -F`).
+#
+# Every regex here takes linear time, and longer text is blocked unread, so a
+# crafted command cannot make the hook time out.
 
 AGENT_ADVICE = "Ask the owner to do this; the agent may not."
 PUSH_MESSAGE = "pushes are done by the owner, not the agent"
+HOLT_MESSAGE = "Holt's folders and credentials are off limits"
 MAX_DEPTH = 4
+MAX_TEXT = 100_000
 
 
 def word(*names: str) -> str:
@@ -201,27 +208,29 @@ def word(*names: str) -> str:
     return r"(?<![\w.-])(?:" + "|".join(names) + r")(?![\w.-])"
 
 
-# `/`, `//` and `/./` all separate path components
-SEP = r"/(?:\.?/)*"
-HOLT_PARENT = re.compile(word(SEP + "(?:run|srv|etc|var" + SEP + "lib)"))
-HOLT_ROOT = word(SEP + "(?:run|srv|etc|var" + SEP + "lib)" + SEP + "holt")
 GIT = re.compile(word("git"))
 PUSH = re.compile(word("push"))
+GIT_ALIAS = re.compile(r"(?<![\w./-])alias\.", re.I)     # `alias.p=push`, not `src/alias.py`
 HOLT = re.compile(word("holt"))
+CREDENTIALS = re.compile(word("credentials"))
+HOLT_PARENT = re.compile(word("etc", "run", "lib", "srv"))
+RUN = re.compile(word("run"))
 TRIPWIRES = [
-    (re.compile("git-push|send-pack|http-push|receive-pack"), PUSH_MESSAGE),
+    (re.compile(word("git-push", "(?:git-)?(?:send-pack|http-push|receive-pack)")), PUSH_MESSAGE),
     (re.compile("GIT_CONFIG_PARAMETERS|GIT_CONFIG_KEY_"), PUSH_MESSAGE),
-    (re.compile(word("sudo", "doas", "pkexec", "run0")), "`sudo` and its relatives are not allowed"),
+    (re.compile(word("sudo", "sudoedit", "doas", "pkexec", "run0")), "`sudo` and its relatives are not allowed"),
     (re.compile(word("socat") + r"|--(?:abstract-)?unix-socket|UNIX-(?:CONNECT|CLIENT|SENDTO)", re.I),
      "`socat` and unix sockets can reach Holt's sockets"),
-    (re.compile(HOLT_ROOT + "|" + word(SEP + "run" + SEP + "credentials") + "|CREDENTIALS_DIRECTORY"),
-     "Holt's folders and credentials are off limits"),
+    (re.compile("CREDENTIALS_DIRECTORY"), HOLT_MESSAGE),
 ]
 NC = re.compile(word(r"nc(?:\.openbsd|\.traditional)?", "ncat", "netcat"))
-UNIX_FLAG = re.compile(r"(?<![\w-])-[A-Za-z]*U[A-Za-z]*(?![\w-])|--unixsock")
-HOLT_FOLDERS = ["/run/holt", "/var/lib/holt", "/etc/holt", "/srv/holt", "/run/credentials"]
-HOLT_PARENTS = ["/run", "/var/lib", "/etc", "/srv"]
+UNIX_FLAG = re.compile(r"(?<![\w-])-[A-Za-z]*U|--unixsock")
+HOLT_FOLDERS = ["/run/holt", "/var/lib/holt", "/etc/holt", "/srv/holt", "/run/credentials",
+                "/var/run/holt", "/var/run/credentials"]
+HOLT_DIRS = ["/var", "/run", "/etc", "/srv"]      # a session in (or below) these, or in `/`, may not name Holt
 FILE_TOOLS = {"Read", "Edit", "MultiEdit", "Write", "NotebookEdit", "NotebookRead", "LS", "Grep", "Glob"}
+# a quoted string (`'...'`, `"..."`, `$'...'`); a backslash outside quotes escapes the next character
+QUOTED = re.compile(r"""\\[\s\S]|\$'((?:[^'\\]|\\[\s\S])*)'|'([^']*)'|"((?:[^"\\]|\\[\s\S])*)\"""")
 
 # programs that run another command given in their arguments, and the options
 # of theirs that take a value (so the value is not mistaken for the command)
@@ -240,9 +249,20 @@ def agent_block(reason: str) -> None:
     block(reason, AGENT_ADVICE)
 
 
-def tripwires(text: str, in_holt_parent: bool = False) -> None:
+def names_holt(text: str, in_holt_dir: bool = False) -> bool:
+    """Does `text` name Holt's folders or credentials? `holt` with `etc`, `run`, `lib` or `srv`, or
+    `credentials` with `run`, each as a whole word, so `../../etc/holt` and `/var/run/holt` count.
+    In a session folder below /etc, /run, /var or /srv (or in /), the name alone counts."""
+    text = re.sub(r"/(?:\.?/)+", "/", text)       # `//` and `/./` are one separator
+    holt, creds = HOLT.search(text), CREDENTIALS.search(text)
+    return bool((holt or creds) and (in_holt_dir or holt and HOLT_PARENT.search(text) or creds and RUN.search(text)))
+
+
+def tripwires(text: str, in_holt_dir: bool = False) -> None:
     """Block text that mentions a forbidden thing anywhere, however the shell would read it."""
-    git_alias = re.search(r"alias\.", text) and (GIT.search(text) or "GIT_CONFIG" in text)
+    if len(text) > MAX_TEXT:
+        agent_block("text too long to check")
+    git_alias = GIT_ALIAS.search(text) and (GIT.search(text) or "GIT_CONFIG" in text)
     if (GIT.search(text) and PUSH.search(text)) or git_alias:
         agent_block(PUSH_MESSAGE)
     for pattern, reason in TRIPWIRES:
@@ -250,46 +270,50 @@ def tripwires(text: str, in_holt_parent: bool = False) -> None:
             agent_block(reason)
     if NC.search(text) and UNIX_FLAG.search(text):
         agent_block("`nc -U` can reach Holt's sockets")
-    # `cd /etc && cat holt/credentials/x`: the parent folder and the name, in different words
-    if HOLT.search(text) and (HOLT_PARENT.search(text) or in_holt_parent):
-        agent_block("Holt's folders and credentials are off limits")
+    if names_holt(text, in_holt_dir):
+        agent_block(HOLT_MESSAGE)
+
+
+def in_holt_dir(path: str) -> bool:
+    return path == "/" or any(path == d or path.startswith(d + "/") for d in HOLT_DIRS)
 
 
 def inside_holt(path: str, base: str) -> bool:
     """Is `path` (relative to `base`) inside a Holt folder, directly or through a symlink?"""
-    full = re.sub(r"^/+", "/", os.path.normpath(os.path.join(base, os.path.expanduser(path))))
-    return any(p == root or p.startswith(root + "/")
-               for p in (full, os.path.realpath(full)) for root in HOLT_FOLDERS)
+    joined = os.path.join(base, os.path.expanduser(path))
+    # symlinks are followed before `..` is removed, as the system does
+    resolved = [re.sub(r"^/+", "/", p) for p in (os.path.normpath(joined), os.path.realpath(joined))]
+    return any(p == root or p.startswith(root + "/") for p in resolved for root in HOLT_FOLDERS)
 
 
 def check_agent_paths(tool: str, inp: dict, cwd: str) -> None:
-    """File tools: no path may lead into Holt's folders. Relative paths start from the event's cwd."""
+    """File tools: no path may lead into Holt's folders. Relative paths start from the event's cwd,
+    Glob's `pattern` and Grep's `glob` from the folder they search."""
     path = inp.get("path")
-    checks = [(inp.get(k), cwd) for k in ("file_path", "notebook_path", "path")]
+    searched = os.path.join(cwd, os.path.expanduser(path)) if isinstance(path, str) else cwd
+    key = {"Glob": "pattern", "Grep": "glob"}.get(tool)     # a path pattern (Grep's own `pattern` is a regex)
+    pattern = inp.get(key) if key else None
+    checks = [(inp.get(k), cwd) for k in ("file_path", "notebook_path", "path")] + [(pattern, searched)]
     if tool in {"Grep", "Glob", "LS"} and not path:
         checks.append((".", cwd))           # no path given: it looks in the current folder
-    if tool == "Glob":                      # the pattern is a path below `path` (Grep's is a regex, not a path)
-        checks.append((inp.get("pattern"), os.path.join(cwd, os.path.expanduser(path)) if isinstance(path, str) else cwd))
     for value, base in checks:
         if value is None:
             continue
         if not isinstance(value, str):
             agent_block("a file path that is not text")
         if inside_holt(value, base):
-            agent_block("Holt's folders and credentials are off limits")
-    if tool == "Grep" and inp.get("glob") is not None:    # only a filename filter: text rules, not a path
-        if not isinstance(inp["glob"], str):
-            agent_block("a file filter that is not text")
-        tripwires(inp["glob"])
+            agent_block(HOLT_MESSAGE)
+    if pattern is not None:                 # a pattern such as `*/holt/*` in /etc cannot be resolved: read it as text
+        tripwires(os.path.join(searched, pattern))
 
 
 def tokenize(cmd: str) -> list[list[str]]:
     """Split a shell line into simple commands, keeping quoted text as one word.
 
     `sh -c "a; b"` stays one word. `;`, `&`, `|`, `( )`, newlines and backticks
-    separate commands. Redirects (`2>&1`, `> file`) are dropped.
+    separate commands. Redirects (`2>&1`, `> file`) are dropped, never with a quote mark.
     """
-    cmd = re.sub(r"\d*[<>]+&?\s*(?:\d+-?|[^\s;&|()<>]+)?", " ", cmd).replace("`", ";").replace("\n", ";")
+    cmd = re.sub(r"(?<!\d)\d*[<>]+&?\s*(?:\d+-?|[^\s;&|()<>'\"]+)?", " ", cmd).replace("`", ";").replace("\n", ";")
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lex.commenters = ""
     try:
@@ -305,12 +329,23 @@ def tokenize(cmd: str) -> list[list[str]]:
     return [seg for seg in out if seg]
 
 
+def quoted_parts(cmd: str) -> list[str]:
+    """Every quoted string in `cmd`, and, in case the quoting is misread, the text between any two quote marks."""
+    if "'" not in cmd and '"' not in cmd:
+        return []
+    return [g for m in QUOTED.finditer(cmd) for g in m.groups() if g] + re.split("['\"]", cmd)
+
+
+@functools.cache
 def simple_commands(cmd: str, depth: int = 0) -> list[list[str]]:
     """Every simple command in `cmd`, also those behind `timeout 5`, `env`, `xargs` and so on,
-    inside `sh -c '...'`, `$( )`, backticks and `find -exec`."""
+    inside `sh -c '...'`, `$( )`, backticks and `find -exec`, and inside every quoted string
+    (`echo 'gh pr create' | sh`)."""
     if depth > MAX_DEPTH:
         agent_block("commands nested too deeply to check")
     found = []
+    for part in quoted_parts(cmd):
+        found += simple_commands(part, depth + 1)
     for toks in tokenize(cmd):
         while toks:
             prog = toks[0].rsplit("/", 1)[-1]
@@ -328,9 +363,9 @@ def simple_commands(cmd: str, depth: int = 0) -> list[list[str]]:
         found.append(toks)
         prog = toks[0].rsplit("/", 1)[-1]
         if prog in SHELLS:
-            for i, t in enumerate(toks[1:-1], 1):
-                if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", t):
-                    found += simple_commands(toks[i + 1], depth + 1)
+            for i, t in enumerate(toks[1:], 1):
+                if re.fullmatch(r"-[A-Za-z]+", t) and "c" in t:       # -c, -lc, then maybe `--`
+                    found += simple_commands(next((s for s in toks[i + 1:] if s != "--"), ""), depth + 1)
                     break
         elif prog == "eval":
             found += simple_commands(" ".join(toks[1:]), depth + 1)
@@ -339,6 +374,30 @@ def simple_commands(cmd: str, depth: int = 0) -> list[list[str]]:
                 if t in {"-exec", "-execdir", "-ok", "-okdir"}:
                     found += simple_commands(shlex.join(toks[i + 1:]), depth + 1)
     return found
+
+
+def check_agent_scripted(cmd: str) -> None:
+    """The cloud rule for a scripted HTTP write, in linear time (`urlopen(` and `data=` may be on different lines)."""
+    if re.search(r"api\.github\.com", cmd) and (
+            re.search(r"requests\.(post|patch|put|delete)|method=['\"](POST|PATCH|PUT|DELETE)", cmd, re.I)
+            or re.search(r"urlopen\(", cmd, re.I) and re.search("data=", cmd, re.I)):
+        block("scripted HTTP write to GitHub")
+
+
+def check_agent_command(toks: list[str]) -> None:
+    """Agent-only GitHub rules for one simple command: gh's `new`, and more HTTP write flags."""
+    prog = toks[0].rsplit("/", 1)[-1]
+    if prog == "gh":
+        check_gh(["create" if t == "new" else t for t in toks])      # `gh pr new` is `gh pr create`
+    if prog not in {"curl", "wget"} or not re.search(r"github\.com|githubusercontent", " ".join(toks)):
+        return
+    for t, after in zip(toks, toks[1:] + [""]):
+        flag = re.match(r"-[A-Za-z]*?([XdFT])", t) if prog == "curl" else None    # also in a cluster: -sSXPOST, -sd
+        if t.startswith(("--post-", "--body-")) or flag and flag[1] != "X":      # wget --post-data, --body-file
+            block("HTTP request with a body to GitHub")
+        method = re.match(r"--(?:method|request)(?:=|$)", t) or flag
+        if method and (t[method.end():] or after).upper() not in {"GET", "HEAD"}:
+            block("HTTP write to GitHub")
 
 
 def walk_strings(value):
@@ -362,18 +421,18 @@ def check_agent_event(event) -> None:
     if not isinstance(event, dict):
         agent_block("the tool call is not a JSON object")
     tool, inp, cwd = event.get("tool_name"), event.get("tool_input"), event.get("cwd")
-    if not isinstance(tool, str) or not isinstance(inp, dict) or not (cwd is None or isinstance(cwd, str)):
+    if not tool or not isinstance(tool, str) or not isinstance(inp, dict) or not (cwd is None or isinstance(cwd, str)):
         agent_block("the tool call is malformed")
     if any("\0" in s for s in walk_strings(event)):
         agent_block("the tool call contains a NUL byte")
     cmd = inp.get("command")
     if tool == "Bash" and not isinstance(cmd, str):
         agent_block("the Bash tool call has no command text")
-    here = os.path.abspath(cwd or ".")
+    here = re.sub(r"^/+", "/", os.path.abspath(cwd or "."))
     if inside_holt(".", here):
-        agent_block("Holt's folders and credentials are off limits")
+        agent_block(HOLT_MESSAGE)
     if tool == "Bash":
-        tripwires(cmd, in_holt_parent=os.path.realpath(here) in HOLT_PARENTS)
+        tripwires(cmd, in_holt_dir(here) or in_holt_dir(os.path.realpath(here)))
     elif tool.startswith("mcp__"):
         for s in walk_strings(inp):
             tripwires(s)
@@ -381,9 +440,12 @@ def check_agent_event(event) -> None:
         check_agent_paths(tool, inp, here)
     # everything the cloud profile blocks
     if tool == "Bash":
-        check_bash(cmd, cwd)
-        for toks in simple_commands(cmd):
-            check_bash(shlex.join(toks), cwd)
+        commands = simple_commands(cmd)
+        for text in [cmd, *map(shlex.join, commands)]:
+            check_agent_scripted(text)
+            check_bash(text, cwd, scripted=False)
+        for toks in commands:
+            check_agent_command(toks)
     elif tool.startswith("mcp__"):
         check_mcp(tool)
 

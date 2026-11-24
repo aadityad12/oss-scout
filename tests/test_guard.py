@@ -380,10 +380,8 @@ def test_agent_push_forms_say_who_pushes():
 
 
 @pytest.mark.parametrize("cmd", [
-    "ls tests/fixtures/etc/holt",
     "ls /srv/holt-src",
     "ls /etc/holt.d",
-    "cat ./etc/holt/notes.md",
     "ls /home/agent",
     "ls /etc",
     "timeout 60 pytest -k foo",
@@ -558,3 +556,112 @@ def test_cloud_profile_keeps_its_exit_codes(raw, code):
 def test_cloud_profile_still_allows_what_the_agent_profile_blocks():
     for cmd in ("echo 'git push origin main' | sh", "git log --grep=sudo", "timeout 5 git-send-pack x"):
         assert bash(cmd) == 0, cmd
+
+
+# ---- agent profile, round 2: Holt as path words, quoted commands, timeouts ----
+
+@pytest.mark.parametrize("cmd,cwd", [
+    # Holt's folders through `..`, /var/run or a relative path
+    ("cat ../../etc/holt/credentials/x", None),
+    ("cat /tmp/../etc/holt/credentials/x", None),
+    ("ls /var/run/holt", None),
+    ("cat /var/run/credentials/x", None),
+    ("ls ../../run/credentials", None),
+    ("cd / && cat etc/holt/credentials/x", None),
+    ("cd /var && cat lib/holt/state", None),
+    ("ls credentials", "/run"),
+    ("ls ../holt", "/etc/ssl"),
+    ("cat holt/x", "/"),
+    # accepted false positives: `etc` and `holt` as path words are enough
+    ("ls tests/fixtures/etc/holt", None),
+    ("cat ./etc/holt/notes.md", None),
+    # GitHub writes behind pipes and quoting
+    ("echo 'gh pr create --title x --body y' | sh", None),
+    ("sh <<< 'gh pr create --title x --body y'", None),
+    ('echo "$(timeout 5 gh pr create --title x --body y)"', None),
+    ("bash -c -- 'gh pr create --title x --body y'", None),
+    ("env -S 'gh pr create --title x --body y'", None),
+    ("bash -c 'gh pr create --title x --body y >/dev/null'", None),
+    ("echo \\' ; echo 'gh pr create' | sh", None),
+    # `new` is gh's alias for `create`
+    ("gh pr new --title x --body y", None),
+    ("gh issue new --title x --body y", None),
+    ("gh repo new x --public", None),
+    # more forms
+    ("sudoedit /etc/hosts", None),
+    ("wget --method=POST https://api.github.com/repos/o/r/issues", None),
+    ("wget --method POST https://api.github.com/repos/o/r/issues", None),
+    ("wget --post-data='{}' https://api.github.com/repos/o/r/issues", None),
+    ("wget --post-file=body.json https://api.github.com/repos/o/r/issues", None),
+    ("curl -sSXPOST https://api.github.com/repos/o/r/issues", None),
+    ("curl -sSd '{}' https://api.github.com/repos/o/r/issues", None),
+    ("curl --request=PATCH https://api.github.com/repos/o/r", None),
+])
+def test_agent_blocks_round_two(cmd, cwd):
+    code, err = agent(command=cmd, cwd=cwd)
+    assert code == 2 and err.startswith("Blocked by oss-scout guard"), (cmd, cwd)
+
+
+@pytest.mark.parametrize("cmd", [
+    "ls /srv/holt-src",
+    "git add tests/test_alias.py",
+    "git diff -- tests/receive-packet.test.js",
+    "ls /run/user/1000",
+    "cat /etc/os-release",
+    "pip install -U pytest",
+    "curl -XGET https://api.github.com/repos/o/r",
+    "curl -sSL https://github.com/o/r/raw/main/README.md",
+    "gh pr view 3 --json title -q '.title'",
+    "gh pr list --search new",
+    "bash -c \"cd src && python3 -c 'print(\\\"ok\\\")'\"",
+])
+def test_agent_allows_round_two(cmd):
+    assert agent_bash(cmd) == 0, cmd
+
+
+@pytest.mark.parametrize("inp,cwd,code", [
+    ({"pattern": "x", "path": "/etc", "glob": "holt/**"}, "/home/agent", 2),
+    ({"pattern": "x", "glob": "holt/**"}, "/etc", 2),
+    ({"pattern": "x", "path": "/home/agent/src", "glob": "holt/**"}, None, 0),
+    ({"pattern": "/etc/holt", "path": "/home/agent/src"}, None, 0),
+])
+def test_agent_resolves_greps_glob(inp, cwd, code):
+    assert agent("Grep", cwd=cwd, **inp)[0] == code, (inp, cwd)
+
+
+def test_agent_follows_a_symlink_before_dot_dot(tmp_path):
+    (tmp_path / "link").symlink_to("/etc/holt/credentials")
+    assert agent("Read", file_path=str(tmp_path / "link") + "/../x")[0] == 2
+
+
+@pytest.mark.parametrize("event", [{"tool_name": "", "tool_input": {}}, {"tool_name": "", "tool_input": {"command": "ls"}}])
+def test_agent_blocks_an_empty_tool_name(event):
+    p = subprocess.run([sys.executable, str(GUARD), "--profile", "agent"], input=json.dumps(event),
+                       capture_output=True, text=True)
+    assert p.returncode == 2
+
+
+@pytest.mark.parametrize("cmd,code", [
+    ("ls " + "/./" * 350_000, 2),            # 1 MB: too long to check, blocked unread
+    ("ls " + "/./" * 33_000, 0),             # just under the limit: read, and quickly
+    ("cat /etc" + "/./" * 33_000 + "holt", 2),
+    ("echo " + "1" * 99_000, 0),
+    ("nc -" + "U" * 99_000 + "_", 2),
+])
+def test_agent_decides_long_commands_quickly(cmd, code):
+    import time
+    start = time.monotonic()
+    assert agent_bash(cmd) == code
+    assert time.monotonic() - start < 2
+
+
+def test_agent_blocks_long_mcp_text():
+    assert agent("mcp__slack__post_message", text="x" * 100_001)[0] == 2
+    assert agent("mcp__slack__post_message", text="x" * 1000)[0] == 0
+
+
+def test_settings_agent_json_fails_closed_and_denies_gh_new():
+    s = json.loads((GUARD.parent / "settings.agent.json").read_text())
+    assert s["hooks"]["PreToolUse"][0]["hooks"][0]["onFailure"] == "block"
+    for rule in ("Bash(gh pr new:*)", "Bash(gh issue new:*)", "Bash(gh repo new:*)"):
+        assert rule in s["permissions"]["deny"]
