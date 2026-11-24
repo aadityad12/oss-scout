@@ -182,9 +182,7 @@ def test_agent_blocks(cmd):
 @pytest.mark.parametrize("cmd", [
     "git status",
     "git commit -m x",
-    "git commit -m 'fix the git push bug'",
     "git fetch origin",
-    "git log --grep=sudo",
     "gh issue view 1 --repo o/r",
     "gh api repos/o/r/issues",
     "ls /home/agent",
@@ -295,3 +293,268 @@ def test_settings_agent_json_matches_the_guard():
     assert hook["hooks"][0]["command"].endswith("guard.py --profile agent")
     assert "Bash(git push:*)" in s["permissions"]["deny"]
     assert s["attribution"] == {"commit": "", "pr": "", "sessionUrl": False}
+
+
+# ---- agent profile: whole-text rules, unwrapping, fail closed, file tools ----
+# The agent profile reads the command as plain text and errs on blocking, so a
+# harmless command that mentions `git` and `push`, or `sudo`, is blocked too.
+
+@pytest.mark.parametrize("cmd", [
+    # ways around a token-by-token reading of `git push`
+    "echo 'git push origin main' | sh",
+    "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git', 'push'])\nEOF",
+    "find . -exec git push origin main \\;",
+    "git submodule foreach git push",
+    "git rebase -x 'git push origin main' HEAD~1",
+    "git subtree push --prefix=x origin main",
+    "git config alias.p push && git p",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p",
+    "git --config-env alias.p=V p",
+    "git --config-env=alias.p=V p",
+    "{ git push origin main; }",
+    "! git push origin main",
+    "if true; then git push origin main; fi",
+    "git 2>&1 push origin main",
+    "timeout 5 git-send-pack origin main",
+    "git-push origin main",
+    "git receive-pack x",
+    "git http-push x",
+    # the sudo family, also inside substitutions
+    'echo "$(sudo -n true)"',
+    'echo "`sudo -n true`"',
+    "doas ls",
+    "pkexec ls",
+    "run0 ls",
+    # unix sockets
+    "env nc -U /tmp/s",
+    "ncat -Uv /tmp/s",
+    "netcat -lU /tmp/s",
+    "xargs socat - UNIX-CONNECT:/tmp/s",
+    "curl --abstract-unix-socket x http://localhost",
+    "curl --unix-socket /tmp/s http://localhost",
+    "echo x | python3 -c 'print(\"unix-sendto\")' UNIX-SENDTO:/tmp/s",
+    # Holt folders, however they are written
+    "cat //etc//holt/credentials/x",
+    "cat /etc/./holt/credentials/x",
+    "cat /var//lib/./holt/state",
+    "cd -P /etc; cat holt/credentials/x",
+    "cd /etc && cat holt/credentials/x",
+    "cat /run/credentials/holt.service/x",
+    "echo $CREDENTIALS_DIRECTORY",
+    # GitHub writes hidden behind a wrapper
+    "bash -c 'gh pr create --title x --body y'",
+    "sh -c \"echo hi; gh issue comment 1 --body hi\"",
+    "bash -lc 'gh pr create'",
+    "timeout 5 gh pr create --title x --body y",
+    "env -i FOO=1 gh pr create --title x --body y",
+    "nice -n 5 gh pr merge 3",
+    "nohup gh pr comment 1 --body hi",
+    "xargs -n1 gh pr comment",
+    "stdbuf -oL gh pr create",
+    "find . -name x -exec gh pr create \\;",
+    "echo $(gh pr create --title x --body y)",
+    "echo `gh pr create --title x --body y`",
+    "{ gh pr create --title x --body y; }",
+    "! gh pr create --title x --body y",
+    "if true; then gh pr create --title x --body y; fi",
+    "gh 2>&1 pr create --title x --body y",
+    "gh 2>/dev/null pr create --title x --body y",
+    "timeout 5 bash -c \"env gh pr create\"",
+    "eval 'gh pr create'",
+    "time curl -X POST https://api.github.com/repos/o/r/issues -d '{}'",
+    # now blocked on purpose: the words are there, put them in a file and use `git commit -F file`
+    "git commit -m 'fix the git push bug'",
+    "git log --grep=sudo",
+    "env git commit -m sudo",
+])
+def test_agent_blocks_hidden_forms(cmd):
+    code, err = agent(command=cmd)
+    assert code == 2, cmd
+    assert err.startswith("Blocked by oss-scout guard"), cmd
+
+
+def test_agent_push_forms_say_who_pushes():
+    for cmd in ("echo 'git push origin main' | sh", "git 2>&1 push", "git -c alias.p=push p", "timeout 5 git-send-pack x"):
+        code, err = agent(command=cmd)
+        assert code == 2 and "pushes are done by the owner, not the agent" in err, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "ls tests/fixtures/etc/holt",
+    "ls /srv/holt-src",
+    "ls /etc/holt.d",
+    "cat ./etc/holt/notes.md",
+    "ls /home/agent",
+    "ls /etc",
+    "timeout 60 pytest -k foo",
+    "timeout 5 sleep 1",
+    "env FOO=1 python3 -m scout run",
+    "nice -n 5 ls",
+    "xargs -n1 echo",
+    "bash -c 'ls && git status'",
+    "echo $(git rev-parse HEAD)",
+    "find . -name '*.py' -exec grep -l TODO {} +",
+    "git commit -m \"fix the parser\"",
+    "git status",
+    "git fetch origin",
+    "git log --oneline -5",
+    "git diff HEAD~1",
+    "gh issue view 1 --repo o/r",
+    "gh pr view 3 --comments",
+    "gh 2>&1 pr view 3",
+    "npm test",
+    "python3 -m pytest -q",
+    "cd /tmp && git diff > draft.patch",
+    "git commit -F msg.txt",
+])
+def test_agent_allows_normal_work(cmd):
+    assert agent_bash(cmd) == 0, cmd
+
+
+def test_agent_checks_the_command_in_a_heredoc_the_same_way():
+    assert agent_bash("cat <<'EOF' > notes.md\nnothing special\nEOF") == 0
+    assert agent_bash("cat <<'EOF' > notes.md\ngit push origin main\nEOF") == 2
+
+
+@pytest.mark.parametrize("event", [
+    # a malformed tool call blocks; it must not crash into exit 1, which lets the tool run
+    {"tool_name": "mcp__github__create_issue", "tool_input": {"title": "x\u0000"}},
+    {"tool_name": "Bash", "tool_input": {"command": "ls\u0000"}},
+    {"tool_name": "Read", "tool_input": {"file_path": "/home/agent/a\u0000b"}},
+    {"tool_name": "mcp__slack__post_message", "tool_input": {"text": ["ok", {"k": "a\u0000"}]}},
+    {"tool_name": "Bash", "tool_input": "git status"},
+    {"tool_name": "Bash", "tool_input": ["git status"]},
+    {"tool_name": "Bash", "tool_input": None},
+    {"tool_name": "Bash"},
+    {"tool_name": "Bash", "tool_input": {}},
+    {"tool_name": "Bash", "tool_input": {"command": None}},
+    {"tool_name": "Bash", "tool_input": {"command": ["git", "status"]}},
+    {"tool_name": "Bash", "tool_input": {"command": 7}},
+    {"tool_name": None, "tool_input": {}},
+    {"tool_name": 5, "tool_input": {}},
+    {"tool_input": {}},
+    {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": 5},
+    {"tool_name": "Read", "tool_input": {"file_path": 5}},
+    {"tool_name": "Read", "tool_input": {"file_path": ["/home/agent/a"]}},
+    {"tool_name": "Grep", "tool_input": {"pattern": "x", "path": {"a": 1}}},
+    {"tool_name": "Grep", "tool_input": {"pattern": "x", "glob": 3}},
+])
+def test_agent_fails_closed_on_malformed_events(event):
+    p = subprocess.run([sys.executable, str(GUARD), "--profile", "agent"], input=json.dumps(event),
+                       capture_output=True, text=True)
+    assert p.returncode == 2 and p.stderr.startswith("Blocked by oss-scout guard"), event
+
+
+@pytest.mark.parametrize("raw", ["null", "[]", "[1]", "7", '"x"', "true", "{", "", "not json", '{"tool_name":'])
+def test_agent_fails_closed_on_non_object_input(raw):
+    p = subprocess.run([sys.executable, str(GUARD), "--profile", "agent"], input=raw,
+                       capture_output=True, text=True)
+    assert p.returncode == 2 and p.stderr.startswith("Blocked by oss-scout guard"), raw
+
+
+def test_agent_fails_closed_on_very_deep_input():
+    p = subprocess.run([sys.executable, str(GUARD), "--profile", "agent"],
+                       input='{"tool_name":"mcp__x__y","tool_input":' + "[" * 100000 + "]" * 100000 + "}",
+                       capture_output=True, text=True)
+    assert p.returncode == 2 and p.stderr.startswith("Blocked by oss-scout guard")
+
+
+def test_agent_fails_closed_when_commands_nest_too_deep():
+    cmd = "ls"
+    for _ in range(8):
+        cmd = "sh -c " + json.dumps(cmd)
+    assert agent_bash(cmd) == 2
+
+
+@pytest.mark.parametrize("tool,inp,cwd", [
+    ("Read", {"file_path": "holt/credentials/github-read"}, "/etc"),
+    ("Read", {"file_path": "../holt/credentials/github-read"}, "/etc/ssl"),
+    ("Read", {"file_path": "credentials/github-read"}, "/etc/holt"),
+    ("Glob", {"pattern": "*"}, "/etc/holt"),
+    ("Glob", {"pattern": "holt/*"}, "/etc"),
+    ("Glob", {"pattern": "credentials/*", "path": "/etc/holt"}, "/home/agent"),
+    ("Glob", {"pattern": "holt/**", "path": "/etc"}, "/home/agent"),
+    ("Grep", {"pattern": "token"}, "/etc/holt"),
+    ("Grep", {"pattern": "token", "path": "."}, "/var/lib/holt"),
+    ("LS", {"path": "/etc/holt"}, None),
+    ("LS", {"path": "/etc//holt/"}, None),
+    ("LS", {}, "/srv/holt"),
+    ("NotebookRead", {"notebook_path": "/etc/holt/n.ipynb"}, None),
+    ("NotebookEdit", {"notebook_path": "/run/credentials/x.ipynb", "new_source": "x"}, None),
+    ("MultiEdit", {"file_path": "/srv/holt/app.py", "edits": []}, None),
+    ("Grep", {"pattern": "x", "path": "/home/agent", "glob": "/etc/holt/**"}, None),
+    # any tool at all, when the session itself is inside Holt's folders
+    ("Read", {"file_path": "/home/agent/notes.md"}, "/etc/holt"),
+    ("Bash", {"command": "ls"}, "/etc/holt/credentials"),
+    ("WebFetch", {"url": "https://example.com"}, "/run/credentials/holt.service"),
+])
+def test_agent_blocks_file_tools_in_and_from_holt(tool, inp, cwd):
+    code, err = agent(tool, cwd=cwd, **inp)
+    assert code == 2 and err.startswith("Blocked by oss-scout guard"), (tool, inp, cwd)
+
+
+def test_agent_blocks_a_symlink_into_holt(tmp_path):
+    (tmp_path / "real" / "holt").mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to("/etc/holt")
+    assert agent("Read", file_path=str(link / "credentials" / "x"))[0] == 2
+    assert agent("Read", file_path=str(tmp_path / "real" / "holt" / "x"))[0] == 0
+
+
+@pytest.mark.parametrize("tool,inp,cwd", [
+    ("Grep", {"pattern": "/etc/holt", "path": "/home/agent/src"}, None),
+    ("Grep", {"pattern": "/etc/holt"}, "/home/agent/src"),
+    ("Grep", {"pattern": "sudo|git push", "glob": "*.py"}, "/home/agent/src"),
+    ("Glob", {"pattern": "**/holt/*.py", "path": "/home/agent/src"}, None),
+    ("Write", {"file_path": "/home/agent/a.md", "content": "config lives in /etc/holt, run sudo, git push"}, None),
+    ("Edit", {"file_path": "/home/agent/a.md", "old_string": "/etc/holt", "new_string": "git push"}, None),
+    ("Read", {"file_path": "notes.md"}, "/home/agent"),
+    ("Read", {"file_path": "/srv/holt-src/README.md"}, None),
+    ("LS", {"path": "/home/agent"}, None),
+    ("LS", {"path": "/etc"}, "/home/agent"),
+    ("NotebookRead", {"notebook_path": "/home/agent/n.ipynb"}, None),
+    ("TodoWrite", {"todos": []}, None),
+    ("mcp__slack__post_message", {"text": "hi"}, None),
+    ("mcp__github__get_issue", {"owner": "o", "repo": "r", "number": 1}, None),
+])
+def test_agent_allows_normal_tool_calls(tool, inp, cwd):
+    assert agent(tool, cwd=cwd, **inp)[0] == 0, (tool, inp, cwd)
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("mcp__files__read", {"path": "/etc/holt/credentials/x"}),
+    ("mcp__shell__run", {"cmd": "sudo ls"}),
+    ("mcp__shell__run", {"cmd": "git push origin main"}),
+    ("mcp__slack__post_message", {"text": "see /var/lib/holt/state"}),
+    ("mcp__github__create_issue", {"title": "x"}),
+    ("mcp__github__add_issue_comment", {"body": "hi"}),
+])
+def test_agent_blocks_mcp_tool_text(tool, inp):
+    assert agent(tool, **inp)[0] == 2, (tool, inp)
+
+
+# ---- the cloud profile is the same as before the agent profile existed ----
+
+CLOUD_QUIRKS = [
+    ("not json", 0), ("", 0), ("{", 0),
+    ("null", 1), ("[]", 1), ("7", 1), ('"x"', 1), ("true", 1),    # a crash, as before
+    ('{"tool_name": null}', 1),
+    ('{"tool_name": "Bash", "tool_input": "x"}', 1),
+    ('{"tool_name": "Bash", "tool_input": {"command": 3}}', 1),
+    ('{"tool_name": "Bash", "tool_input": {"command": "sudo ls /etc/holt; git push origin main"}, "cwd": "/etc/holt"}', 2),
+    ('{"tool_name": "Bash"}', 0),
+    ('{}', 0),
+    ('{"tool_name": "Read", "tool_input": {"file_path": "/etc/holt/x"}}', 0),
+]
+
+
+@pytest.mark.parametrize("raw,code", CLOUD_QUIRKS)
+def test_cloud_profile_keeps_its_exit_codes(raw, code):
+    for args in ([], ["--profile", "cloud"], ["--profile=cloud"]):
+        p = subprocess.run([sys.executable, str(GUARD), *args], input=raw, capture_output=True, text=True)
+        assert p.returncode == code, (raw, args, p.stderr)
+
+
+def test_cloud_profile_still_allows_what_the_agent_profile_blocks():
+    for cmd in ("echo 'git push origin main' | sh", "git log --grep=sudo", "timeout 5 git-send-pack x"):
+        assert bash(cmd) == 0, cmd

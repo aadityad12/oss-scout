@@ -22,20 +22,35 @@ It has two profiles. The profile is chosen only by the command line the hook is 
 
 **`cloud` only:** one write is allowed, `git push origin claude/scout-data` from the checkout of the `oss-scout-data` repo.
 
-**`agent` adds:**
+**`agent` adds** (all of the above, plus the rules below). It errs on blocking:
 
-- every `git push`, in every form: `git -C x push`, `git -c k=v push`, with env variables in front, under `env`/`timeout`, inside `sh -c`/`bash -c`, after `&&`, `;`, `|` or `&`, inside `$( )`, and a script that runs it. `git send-pack` and `git http-push` count too, and so does a git alias defined on the command line. The message is "pushes are done by the owner, not the agent"
-- `sudo`, wherever it appears as a command
-- reaching Holt: `--unix-socket`, `nc -U`, `socat`, and any command text that mentions `/run/holt`, `/var/lib/holt`, `/etc/holt` or `/srv/holt` (also when written as `/etc/./holt` or reached after a `cd`)
-- reading credential folders by path: `/etc/holt/credentials`, `/run/credentials`, `$CREDENTIALS_DIRECTORY` and `${CREDENTIALS_DIRECTORY}`
-- the same Holt folders through Claude's own tools: `Read`, `Edit`, `Write`, `Grep` and `Glob` (their `file_path`, `path`, `pattern` and `glob`), and any MCP tool argument that names one
-- an unreadable tool call (the cloud profile lets it through, as before)
+- **Text rules.** The agent profile reads the whole command as plain text, without trying to understand the shell, so pipes, heredocs, `$( )`, backticks, `{ }`, `if` and `sh -c` all look the same to it. A command is blocked if its text contains any of these:
+  - `git` and `push` as separate words anywhere (`git push`, `git -C x push`, `git 2>&1 push`, `echo 'git push' | sh`, `git submodule foreach git push`, `git subtree push`, `git rebase -x 'git push'`, a Python script that runs `["git", "push"]`), or `git-push`, `send-pack`, `http-push`, `receive-pack`, or `alias.` together with the word `git` (a git alias on the command line or in `git config`), or `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_KEY_`. The message is "pushes are done by the owner, not the agent".
+  - `sudo`, `doas`, `pkexec` or `run0` as words.
+  - `socat`, `--unix-socket`, `UNIX-CONNECT`, `UNIX-CLIENT` or `UNIX-SENDTO`, or `nc`, `ncat` or `netcat` together with a `-U` flag (also inside a combined flag such as `-Uv`).
+  - a Holt folder as whole path parts: `/run/holt`, `/var/lib/holt`, `/etc/holt` or `/srv/holt` (also written `/etc//holt` or `/etc/./holt`), and also one of `/run`, `/var/lib`, `/etc` or `/srv` together with the word `holt` (`cd /etc && cat holt/credentials/x`). Longer paths and names are fine: `tests/fixtures/etc/holt` and `/srv/holt-src` pass.
+  - `CREDENTIALS_DIRECTORY` or `/run/credentials`.
+- **The words are enough, even in harmless text.** A command that only mentions `git` and `push`, or `sudo`, is blocked: `git commit -m 'fix the git push bug'`, `git log --grep=sudo`. Write such text into a file and use `git commit -F file`.
+- **GitHub writes behind a wrapper.** The cloud rules above are also run on the commands inside `sh -c`/`bash -c`/`zsh -c`/`dash -c`, `eval`, `$( )`, backticks, `find -exec`, and after `env`, `timeout`, `nice`, `nohup`, `time`, `exec`, `command`, `xargs`, `stdbuf`, `if`/`then`/`do`, `{` and `!`. So `bash -c 'gh pr create ...'` and `timeout 5 gh pr create ...` are blocked. (Only the agent profile does this; the cloud profile is the same as it always was.)
+- **Claude's own file tools.** `Read`, `Edit`, `MultiEdit`, `Write`, `NotebookEdit`, `NotebookRead`, `LS`, `Grep` and `Glob` are blocked when their path (`file_path`, `notebook_path`, `path`, and for `Glob` the `pattern`) is inside a Holt folder or `/run/credentials`, after relative paths are resolved against the session's folder, `..` is removed and symlinks are followed. `Grep`, `Glob` and `LS` without a `path` look in the session's folder, so that is checked too. `Grep`'s `pattern` is a regular expression, not a path, so it is not checked; its `glob` filter gets the text rules. The text of `Edit` and `Write` is not scanned. Every string given to an MCP tool gets the text rules.
+- **Any tool call at all** is blocked if the session's own folder is inside a Holt folder or `/run/credentials`.
+- **A call it cannot check is blocked.** Unreadable or non-object JSON, a tool name or input of the wrong type, a `Bash` call without command text, a NUL byte in any string, or any error while checking exits 2. (An error that exited 1 would let Claude Code run the tool.)
 
 A bad `--profile` value, `--profile` with no value, or any other argument blocks every tool call and exits 2 with a "Blocked by oss-scout guard" message, so a typo in the settings file stops the agent instead of loosening the guard.
 
 ## Limits
 
-This is a speed bump for a well-behaved agent, not a sandbox. A determined script can still try other ways: globbed paths (`/etc/ho*`), a pre-existing git alias for `push`, code that builds the command at run time. It is a hard stop only together with a separate user account that has no tokens, no GitHub login and no access to Holt's files. Blocking network access in general is a container concern, not the guard's.
+This is a speed bump for a well-behaved agent, not a sandbox. It is a hard stop only together with a separate user account that has no tokens, no GitHub login and no access to Holt's files. Blocking network access in general is a container concern, not the guard's.
+
+What it does not catch, because it never runs anything:
+
+- strings built at run time (`"gi"+"t pu"+"sh"`, a variable that holds the command, a script written by one command and run by the next)
+- globs and patterns for a path (`/etc/ho*`, `/etc/h?lt`), and a search of a parent folder (`grep -r token /etc`)
+- obfuscation such as base64 or hex that is decoded and run
+- a git alias for `push` that is already in a git config file, or a config file chosen with `GIT_CONFIG_GLOBAL`
+- a GitHub write sent by a program the guard does not know, or by a script (it only reads `gh`, `curl`, `wget`, `http` and a few Python patterns)
+
+Because it reads text and not meaning, it also blocks some harmless commands (see above). That is on purpose.
 
 ## Install (agent profile)
 
