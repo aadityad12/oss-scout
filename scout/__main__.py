@@ -4,7 +4,7 @@
   python -m scout track          refresh your contribution history, note new reviews waiting on you
   python -m scout ingest         record briefings written by the Claude step as suggestions
   python -m scout digest         write data/digest.json (what needs you today)
-  python -m scout render         build data/dashboard.html
+  python -m scout render         build data/dashboard.html and data/dashboard.json
   python -m scout render-public  build the public portfolio page
   python -m scout act            do what you tapped on the dashboard (runs in the data repo's act workflow)
   python -m scout refresh-check  try an approved draft on the project's current code (the act workflow's no-secrets job)
