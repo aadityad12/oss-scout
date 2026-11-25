@@ -29,7 +29,7 @@ settings. Nothing secret goes in.
 | `portfolio` | object | Exactly what the public page shows (`public.build_payload`). |
 | `limits` | object | `{featured, summary}`: the most featured PRs and the longest summary the portfolio allows. |
 | `run_again` | object | `{daily_cap, cooldown_minutes}`: the extra manual nightly runs allowed per Pacific day and the minutes to wait after the nightly routine starts. Both are integers from `[settings]` in `targets.toml`, with defaults of `1` and `60`. |
-| `projects` | object | `{home, repos}`: the home-project recommendation and the repo research. |
+| `projects` | object | `{home, repos}`: the home-project recommendation and the repo research. A repo carries `merge_prob` (0 to 1) only while `use_merge_model` is on and the merge model passed its checks (see docs/merge-model.md). |
 | `log` | object | `{actions, runs}`: your taps and the recent nightly scans, newest first. |
 
 ## Inbox group

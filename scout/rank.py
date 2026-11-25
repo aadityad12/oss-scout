@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 from .config import Config
@@ -50,8 +51,19 @@ def home_multiplier(repo: str, state: dict, cfg: Config) -> float:
     return mult
 
 
+def valid_merge_prob(value) -> float | None:
+    """A model probability in [0, 1], or None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) and 0.0 <= value <= 1.0 else None
+
+
 def score_issue(issue: dict, repo: dict, cfg: Config, state: dict,
-                now: datetime | None = None) -> dict:
+                now: datetime | None = None, merge_prob: float | None = None) -> dict:
+    """Score one issue. With `use_merge_model = true` and a valid `merge_prob` (passed in, or the
+    repo's `merge_prob`), the merge model takes 0.10 of friendliness's 0.40 weight and shows up as
+    `parts["merge_prob"]`; otherwise the score is exactly what it was before the model existed."""
     now = now or datetime.now(timezone.utc)
     tier = cfg.tier_of(issue["repo"])
     tier_weight = tier.weight if tier else cfg.discovery.get("weight", 0.6)
@@ -62,8 +74,16 @@ def score_issue(issue: dict, repo: dict, cfg: Config, state: dict,
         "label_fit": max((LABEL_FIT.get(g, 0.5) for g in issue["label_groups"]), default=0.5),
         "language_fit": language_fit(repo.get("language"), cfg),
     }
-    base = (0.40 * parts["friendliness"] + 0.25 * parts["freshness"]
-            + 0.20 * parts["label_fit"] + 0.15 * parts["language_fit"])
+    prob = None
+    if cfg.settings.get("use_merge_model", False) is True:
+        prob = valid_merge_prob(merge_prob if merge_prob is not None else repo.get("merge_prob"))
+    if prob is None:
+        base = (0.40 * parts["friendliness"] + 0.25 * parts["freshness"]
+                + 0.20 * parts["label_fit"] + 0.15 * parts["language_fit"])
+    else:
+        parts["merge_prob"] = round(prob, 3)
+        base = (0.30 * parts["friendliness"] + 0.10 * parts["merge_prob"] + 0.25 * parts["freshness"]
+                + 0.20 * parts["label_fit"] + 0.15 * parts["language_fit"])
     mults = {
         "tier": tier_weight,
         "ai_policy": POLICY_MULT.get(repo.get("ai_policy", "none"), 1.0),

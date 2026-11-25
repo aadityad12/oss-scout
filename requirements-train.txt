@@ -1,0 +1,3 @@
+# Only for scripts/train_merge_model.py. The scout itself (scout/) never imports these.
+scikit-learn>=1.5
+numpy>=1.26

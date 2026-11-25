@@ -54,7 +54,38 @@ REPO_INFO_KEYS = (
 def repo_info(repo: dict) -> dict:
     info = {k: repo.get(k) for k in REPO_INFO_KEYS}
     info["topics"] = repo.get("topics") or []  # measurements cached before topics were stored lack it
+    if repo.get("merge_prob") is not None:  # only while the merge model is switched on and passing
+        info["merge_prob"] = repo["merge_prob"]
     return info
+
+
+def apply_merge_model(cfg, data: Path, repos: dict[str, dict], cached: dict[str, dict]) -> int:
+    """Attach `merge_prob` to each repo when `use_merge_model` is on and data/merge_model.json loads
+    (fresh and better than the baselines). Otherwise remove any old `merge_prob`, so the ranking
+    and the dashboard are exactly as without the model. Returns how many repos got a probability."""
+    from . import mergemodel
+    s = cfg.settings
+    model = None
+    if s.get("use_merge_model", False) is True:
+        model = mergemodel.load(data / "merge_model.json", max_age_days=s.get("merge_model_max_age_days", 90))
+        if model is None:
+            log("use_merge_model is on but data/merge_model.json is missing, stale or did not beat the "
+                "baselines; ranking without it")
+    for r in list(cached.values()) + list(repos.values()):
+        if isinstance(r, dict):
+            r.pop("merge_prob", None)
+    if model is None:
+        return 0
+    rows = mergemodel.load_project_rows(data)
+    n = 0
+    for name, r in repos.items():
+        if "friendliness" not in r:
+            continue
+        p = mergemodel.project_score(model, name, r, rows.get(name))
+        if p is not None:
+            r["merge_prob"] = round(p, 3)
+            n += 1
+    return n
 
 
 def field_hint(cfg, issue: dict, info: dict) -> dict:
@@ -146,7 +177,11 @@ def cmd_run(args, cfg, data, gh) -> None:
                 continue
         if (repo not in st["repos"] and new_budget[0] > 0) or (repo in st["repos"] and budget[0] > 0):
             log(f"measuring {repo}")
-        repos[repo] = score.get(gh, repo, st["repos"], s.get("repo_score_ttl_days", 7), budget, new_budget)
+        repos[repo] = score.get(gh, repo, st["repos"], s.get("repo_score_ttl_days", 7), budget, new_budget,
+                                data_dir=data)
+
+    if n_model := apply_merge_model(cfg, data, repos, st["repos"]):
+        log(f"merge model scored {n_model} repos")
 
     scored = []
     for issue in issues:
@@ -154,7 +189,7 @@ def cmd_run(args, cfg, data, gh) -> None:
         if reason := rank.eligible(issue, repo, cfg, st):
             dropped[reason] = dropped.get(reason, 0) + 1
             continue
-        issue.update(rank.score_issue(issue, repo, cfg, st))
+        issue.update(rank.score_issue(issue, repo, cfg, st, merge_prob=repo.get("merge_prob")))
         scored.append(issue)
     scored.sort(key=lambda i: i["score"], reverse=True)
 
