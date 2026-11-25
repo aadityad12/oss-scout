@@ -17,7 +17,7 @@ SKILL = ROOT / ".claude" / "skills" / "contribute" / "SKILL.md"
 
 
 def agent_bash(cmd):
-    event = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    event = {"tool_name": "Bash", "cwd": "/tmp/x", "tool_input": {"command": cmd}}
     p = subprocess.run([sys.executable, str(GUARD), "--profile", "agent"], input=json.dumps(event),
                        capture_output=True, text=True)
     return p.returncode, p.stderr
@@ -42,8 +42,10 @@ def test_skill_describes_holt_mode(text):
     'git -C /tmp/x apply --3way "$OSS_BRIEFING_DIR/draft.patch"',
     "git -C /tmp/x commit -m msg",
     "git -C /tmp/x commit -F /tmp/x/.git/message",
-    "git -C /tmp/x config user.name 'Owner Name'",
-    "git -C /tmp/x config user.email '12345+me@users.noreply.github.com'",
+    "git -C /tmp/x config --local --get user.name",
+    "git -C /tmp/x config --local --get user.email",
+    "git -C /tmp/x config --local user.name 'Owner Name'",
+    "git -C /tmp/x config --local user.email '12345+me@users.noreply.github.com'",
     "git -C /tmp/x fetch origin pull/12/head",
     "git -C /tmp/x switch -c fix/12-slug FETCH_HEAD",
     # the mode and the briefing folder
@@ -51,10 +53,15 @@ def test_skill_describes_holt_mode(text):
     "printenv OSS_BRIEFING_DIR",
     # reads with gh
     "gh issue view 12 --repo o/r --comments",
-    # reads without a GitHub login: the "still free" checks
+    "gh api repos/o/r/issues/12/timeline --paginate --jq '.[] | select(.event==\"cross-referenced\") | .source.issue | select(.pull_request) | {number, state, user: .user.login, url: .html_url}'",
+    "gh pr view https://github.com/o/r/pull/12 --comments",
+    "gh api repos/o/r/pulls/12/comments",
+    # reads without a GitHub login: the "still free" checks (including repo names with gh write words)
     "curl -s https://api.github.com/repos/o/r/issues/12",
+    "curl -s https://api.github.com/repos/o/review/issues/12",
     "curl -s https://api.github.com/repos/o/r/issues/12/timeline",
     'curl -s "https://api.github.com/repos/o/r/issues/12/timeline?per_page=100"',
+    'curl -s "https://api.github.com/repos/o/review/issues/12/timeline?per_page=100"',
     'curl -s "https://api.github.com/repos/o/r/issues/12/timeline?per_page=100&page=2"',
     "curl -s https://api.github.com/users/me",
     # reads without a GitHub login: review feedback

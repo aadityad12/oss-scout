@@ -196,9 +196,12 @@ the text above, follow this section. Everything else, hard rules included, still
   write outside the clone.
 - Never ask the owner to paste a token. Don't run any `gh auth` command either (the guard
   blocks them).
-- That rules out `targets.toml`. If the clone's `git config user.email` is already the
-  owner's noreply address, take their login from it. Otherwise ask the owner for their
-  login and commit name; `curl -s https://api.github.com/users/<login>` gives the `<id>`.
+- That rules out `targets.toml`. Check the clone's local identity with two separate reads:
+  `git -C <dir> config --local --get user.name` and `git -C <dir> config --local --get user.email`
+  (don't pass both keys in one `git config` call, which sets `user.name`). If the clone's
+  local `user.email` is already the owner's noreply address, take their login from it.
+  Otherwise ask the owner for their login and commit name; `curl -s https://api.github.com/users/<login>`
+  gives the `<id>`.
 
 ### Briefing
 
@@ -206,7 +209,7 @@ the text above, follow this section. Everything else, hard rules included, still
   and `followups/` from that folder instead of calling `gh api` on the data repo. The
   folder holds exactly one item, which Holt exports. Not every item has every file.
 - If `OSS_BRIEFING_DIR` is unset, `briefing.json` is missing, or it is for a different issue
-  than the one asked for, say so and stop.
+  than the one asked for (or, for a PR link, the issue the PR fixes), say so and stop.
 - In Draft step 5, the patch to apply is `"$OSS_BRIEFING_DIR/draft.patch"`.
 - `state.json` is not available, so "No argument" lists nothing: ask for the issue key
   (Holt always passes one as the first prompt, `/contribute <key>`).
@@ -222,9 +225,10 @@ the text above, follow this section. Everything else, hard rules included, still
 
 ### Reads
 
-The "still free" checks use `gh issue view` and `gh api` GETs. If one fails because `gh`
-isn't logged in, read the same things with unauthenticated `curl` (the guard allows reads).
-Add no token or auth header.
+The "still free" checks use `gh issue view` and `gh api` GETs. If `gh` isn't logged in or the
+guard blocks the `gh` command (for example when a repo name contains a write word such as
+`review` or `create`), use unauthenticated `curl` instead (the guard allows reads); on a
+tokenless mini PC you can use `curl` directly. Add no token or auth header.
 
 - The issue (state, assignees): `curl -s https://api.github.com/repos/<repo>/issues/<n>`
 - Its timeline (comments, and PRs that mention it: `cross-referenced` events whose
@@ -281,9 +285,13 @@ then stop with this line:
 ### Commits
 
 Local `git commit` stays allowed, with the owner's identity set for this clone as hard rule
-2 says. Who writes the message, and who runs the commit, doesn't change. The guard reads the
-whole command, so it can block a message for its words (such as `push` or `sudo`): save the
-message in a file inside `<dir>/.git/` and use `git -C <dir> commit -F <file>`.
+2 says: read with `git -C <dir> config --local --get user.name` and
+`git -C <dir> config --local --get user.email`, and set with
+`git -C <dir> config --local user.name <name>` and
+`git -C <dir> config --local user.email <id>+<login>@users.noreply.github.com`. Who writes the
+message, and who runs the commit, doesn't change. The guard reads the whole command, so it can
+block a message for its words (such as `push` or `sudo`): save the message in a file inside
+`<dir>/.git/` and use `git -C <dir> commit -F <file>`.
 
 ### Modes
 
