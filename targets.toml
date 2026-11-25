@@ -44,6 +44,12 @@ run_again_cooldown_minutes = 60  # minutes to wait after the routine starts
 # "Let the data decide": go wide until this date, then recommend home projects.
 # Pushed out to explore again with the large company-backed project list.
 wide_phase_until = "2026-12-31"
+# The merge-prediction model (docs/merge-model.md). Off: the ranking ignores it completely.
+# On, it is used only if data/merge_model.json is younger than merge_model_max_age_days and beat
+# the baselines on held-out data; then it takes 0.10 of friendliness's 0.40 weight.
+# Keep this false until docs/merge-model.md says the model helps.
+use_merge_model = false
+merge_model_max_age_days = 90
 
 [submit]
 # Date the GitHub token used to submit approved work was created. Rotate the

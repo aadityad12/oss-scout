@@ -808,6 +808,7 @@ function renderProjects() {
       <div><dt>First reply</dt><dd>${hours(r.median_hours_to_first_response)}</dd></div>
       <div><dt>AI policy</dt><dd class="policy-${esc(r.ai_policy)}" title="${esc(r.ai_policy_evidence)}">${esc({ restrictive: "Restrictive", disclosure: "Disclose", mentioned: "Mentioned", none: "–" }[r.ai_policy] || r.ai_policy)}</dd></div>
       <div><dt>CLA</dt><dd>${r.cla ? "Yes" : "–"}</dd></div>
+      ${r.merge_prob != null ? `<div><dt>Merge chance</dt><dd title="Merge model: chance a typical outside PR here is merged within 90 days">${pct(r.merge_prob)}</dd></div>` : ""}
     </dl></div>`).join("")}</div></div>
     <p class="note">Measured from each project's last 300 closed pull requests by occasional outside contributors (PRs from forks, by people with fewer than 3 recent PRs). "First reply" is the median time until a maintainer or regular responded.</p>`;
   return html;

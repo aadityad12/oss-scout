@@ -185,12 +185,24 @@ def build_payload(cfg: Config, data: Path, st: dict, now: datetime | None = None
     order = {"waiting_on_you": 0, "submitting": 1, "approved": 2}
     flight.sort(key=lambda r: (order.get(r["status"], 3), r.get("created_at") or ""))
 
+    from . import mergemodel
+    show_merge_prob = (
+        cfg.settings.get("use_merge_model", False) is True
+        and mergemodel.load(
+            data / "merge_model.json",
+            now=now,
+            max_age_days=cfg.settings.get("merge_model_max_age_days", 90),
+        ) is not None
+    )
     repos = []
     for name, r in st.get("repos", {}).items():
         if "friendliness" not in r:
             continue
         tier = cfg.tier_of(name)
-        repos.append({**r, "tier": tier.name if tier else "Discovered"})
+        entry = {**r, "tier": tier.name if tier else "Discovered"}
+        if not show_merge_prob:
+            entry.pop("merge_prob", None)
+        repos.append(entry)
     repos.sort(key=lambda r: r["friendliness"], reverse=True)
 
     digest_file = data / "digest.json"

@@ -10,6 +10,7 @@ import math
 import statistics
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import policy
 from .github import GitHub
@@ -99,19 +100,32 @@ def first_maintainer_response_hours(gh: GitHub, repo: str, pr: dict,
     return max(0.0, (min(times) - opened).total_seconds() / 3600)
 
 
-def measure(gh: GitHub, repo: str, now: datetime | None = None) -> dict:
-    now = now or datetime.now(timezone.utc)
-    meta = gh.repo(repo) or {}
+def pr_sample(gh: GitHub, repo: str) -> tuple[list[dict], list[dict]]:
+    """The last CLOSED_SAMPLE closed PRs (by update time) and the 100 newest open ones."""
     all_closed = list(gh.paginate(f"repos/{repo}/pulls",
                                   {"state": "closed", "sort": "updated", "direction": "desc"},
                                   max_items=CLOSED_SAMPLE, ttl=86400))
     all_open = list(gh.paginate(f"repos/{repo}/pulls",
                                 {"state": "open", "sort": "created", "direction": "desc"},
                                 max_items=100, ttl=86400))
+    return all_closed, all_open
+
+
+def author_counts(prs: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for p in all_closed + all_open:
+    for p in prs:
         login = (p.get("user") or {}).get("login")
         counts[login] = counts.get(login, 0) + 1
+    return counts
+
+
+def measure(gh: GitHub, repo: str, now: datetime | None = None, data_dir: Path | None = None) -> dict:
+    """Measure `repo`. With `data_dir`, also merge its outside PRs into data_dir/pr_outcomes.jsonl
+    (see prdata.py); that uses only what was fetched here, no extra API calls."""
+    now = now or datetime.now(timezone.utc)
+    meta = gh.repo(repo) or {}
+    all_closed, all_open = pr_sample(gh, repo)
+    counts = author_counts(all_closed + all_open)
     insiders = {login for login, n in counts.items() if n >= REGULAR_THRESHOLD}
     insiders |= {(p.get("user") or {}).get("login") for p in all_closed + all_open
                  if p.get("author_association") in MAINTAINER or not from_fork(p, repo)}
@@ -148,7 +162,7 @@ def measure(gh: GitHub, repo: str, now: datetime | None = None) -> dict:
     ) if confident else 0.5
 
     pol = policy.fetch(gh, repo)
-    return {
+    result = {
         "repo": repo,
         "measured_at": time.time(),
         "stars": meta.get("stargazers_count"),
@@ -175,6 +189,16 @@ def measure(gh: GitHub, repo: str, now: datetime | None = None) -> dict:
         "cla": pol["cla"],
         "policy_files": pol["files"],
     }
+    if data_dir is not None:
+        from . import prdata
+        try:
+            prdata.merge(Path(data_dir) / prdata.FILE,
+                         prdata.rows(repo, all_closed, all_open, counts, now, repo_meta=result),
+                         add_since=prdata.complete_since(all_closed, all_open, CLOSED_SAMPLE))
+        except Exception as e:
+            import sys
+            print(f"[scout] warning: could not record PR outcomes for {repo}: {e}", file=sys.stderr, flush=True)
+    return result
 
 
 def provisional(gh: GitHub, repo: str) -> dict:
@@ -189,7 +213,7 @@ def provisional(gh: GitHub, repo: str) -> dict:
 
 
 def get(gh: GitHub, repo: str, cache: dict, ttl_days: float, budget: list[int] | None = None,
-        new_budget: list[int] | None = None) -> dict:
+        new_budget: list[int] | None = None, data_dir: Path | None = None) -> dict:
     """Return a cached measurement if fresh, else re-measure and store in `cache`.
 
     `budget` is a one-element list counting how many stale repos may still be
@@ -198,6 +222,7 @@ def get(gh: GitHub, repo: str, cache: dict, ttl_days: float, budget: list[int] |
     `new_budget` does the same for repos never measured before (about 35 API calls
     each): past it they get a provisional entry. Adding many projects at once would
     otherwise blow the Actions token's 1,000 requests an hour in a single night.
+    `data_dir` is passed to `measure` so a fresh measurement also records per-PR rows.
     """
     hit = cache.get(repo)
     if hit and time.time() - hit.get("measured_at", 0) < ttl_days * 86400:
@@ -210,5 +235,5 @@ def get(gh: GitHub, repo: str, cache: dict, ttl_days: float, budget: list[int] |
         if new_budget[0] <= 0:
             return provisional(gh, repo)
         new_budget[0] -= 1
-    cache[repo] = measure(gh, repo)
+    cache[repo] = measure(gh, repo, data_dir=data_dir)
     return cache[repo]

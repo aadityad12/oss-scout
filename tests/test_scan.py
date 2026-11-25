@@ -244,7 +244,7 @@ def test_run_skips_personal_discovered_repos_and_writes_the_new_fields(cfg, monk
     gh = GitHub(transport=Fake({"repos/corp/big/issues/1/timeline": []}))
     gh.repo = lambda name, ttl=0: metas.get(name)
     measured = []
-    monkeypatch.setattr(score, "get", lambda gh, repo, cache, ttl, budget, new_budget=None:
+    monkeypatch.setattr(score, "get", lambda gh, repo, cache, ttl, budget, new_budget=None, data_dir=None:
                         measured.append(repo) or {"friendliness": 0.7, "stars": 9000, "owner_type": "Organization",
                                                   "description": "Big thing", "homepage": "https://big.dev",
                                                   "topics": ["kubernetes"]})
