@@ -111,7 +111,7 @@ def decide(
             jobs = jobs_of(run_id)
             if not isinstance(jobs, list):
                 raise ValueError("Expected a list of jobs")
-            used_attempts: set[int | None] = set()
+            used_attempts: set[tuple[str, int | str]] = set()
             for job in jobs:
                 if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"]:
                     raise ValueError("Expected a named job")
@@ -135,9 +135,17 @@ def decide(
                             raise ValueError("Expected a gate job timestamp")
                         if attempt_at >= midnight_utc:
                             attempt_key = job.get("run_attempt")
-                            if attempt_key is not None and (type(attempt_key) is not int or attempt_key < 1):
-                                raise ValueError("Expected a positive integer job run_attempt")
-                            used_attempts.add(attempt_key)
+                            if attempt_key is not None:
+                                if type(attempt_key) is not int or attempt_key < 1:
+                                    raise ValueError("Expected a positive integer job run_attempt")
+                                slot_key: tuple[str, int | str] = ("attempt", attempt_key)
+                            elif type(job.get("id")) in (int, str) and job["id"]:
+                                slot_key = ("job", str(job["id"]))
+                            else:
+                                slot_key = ("unknown", "")
+                                if slot_key in used_attempts:
+                                    raise ValueError("Cannot distinguish gate job attempts")
+                            used_attempts.add(slot_key)
                 if not check_cooldown:
                     continue
                 if job["name"] == "scan" and "steps" not in job and conclusion_of(job) == "success":

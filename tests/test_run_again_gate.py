@@ -152,11 +152,23 @@ def test_multiple_same_day_rerun_attempts_each_consume_a_slot():
 
 def test_custom_cap_counts_each_run_once_and_pluralizes():
     runs = [run(1), run("1"), run(2)]
-    jobs_of = lambda _: [gate_job(), gate_job()]
+    jobs_of = lambda _: [{**gate_job(), "run_attempt": 1}, {**gate_job(), "run_attempt": 1}]
     assert gate.decide(NOW, runs, jobs_of, 3, 60, 100)[0]
     allowed, reason = gate.decide(NOW, runs, jobs_of, 2, 60, 100)
     assert not allowed
     assert reason == "Daily limit reached: 2 extra runs per Pacific day, 2 used. The next one is allowed after midnight Pacific."
+
+
+def test_gate_jobs_missing_run_attempt_use_job_id_or_fail_closed():
+    distinct_ids = [{**gate_job(), "id": 10}, {**gate_job(), "id": 11}]
+    allowed, reason = gate.decide(NOW, [run(50)], lambda _: distinct_ids, 2, 60, "100")
+    assert not allowed and "2 used" in reason
+
+    duplicate_id = [{**gate_job(), "id": 10}, {**gate_job(), "id": 10}]
+    assert gate.decide(NOW, [run(50)], lambda _: duplicate_id, 2, 60, "100")[0]
+
+    unidentifiable = [gate_job(), gate_job()]
+    assert gate.decide(NOW, [run(50)], lambda _: unidentifiable, 2, 60, "100") == (False, gate.UNVERIFIED)
 
 
 def test_decide_fails_closed_on_jobs_error():
