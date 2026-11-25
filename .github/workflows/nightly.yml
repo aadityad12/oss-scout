@@ -28,6 +28,8 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -138,6 +140,7 @@ jobs:
 
   deploy:
     needs: scan
+    if: ${{ !cancelled() && needs.scan.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       pages: write

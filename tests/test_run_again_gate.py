@@ -12,7 +12,7 @@ from scripts import run_again_gate as gate
 NOW = datetime(2026, 7, 10, 21, 5, tzinfo=timezone.utc)
 CAP_REASON = "Daily limit reached: 1 extra run per Pacific day, 1 used. The next one is allowed after midnight Pacific."
 TOKEN = "ghs_private_test_token"
-RUNS_URL = f"{gate.API}/repos/owner/scout/actions/workflows/nightly.yml/runs?per_page=100"
+RUNS_URL = f"{gate.API}/repos/owner/scout/actions/workflows/nightly.yml/runs?created=%3E%3D2026-06-09&per_page=100"
 JOBS_URL = f"{gate.API}/repos/owner/scout/actions/runs/1/jobs?filter=all&per_page=100"
 
 
@@ -83,6 +83,40 @@ def test_current_run_is_excluded(listed_id, current_id):
         pytest.fail(f"Unexpected lookup for the current run {run_id}")
 
     assert gate.decide(NOW, [run(listed_id)], jobs_of, 1, 60, current_id)[0]
+
+
+def test_rerun_same_run_counts_earlier_attempt_for_cap_and_cooldown():
+    jobs_cap = [
+        {**gate_job("success"), "run_attempt": 1},
+        {**gate_job(None, status="in_progress"), "run_attempt": 2},
+    ]
+    allowed, reason = gate.decide(NOW, [run(100)], lambda _: jobs_cap, 1, 60, "100", current_run_attempt="2")
+    assert not allowed and reason == CAP_REASON
+
+    jobs_cooldown = [
+        {**gate_job("success"), "run_attempt": 1},
+        {**routine_job(10), "run_attempt": 1},
+        {**gate_job(None, status="in_progress"), "run_attempt": 2},
+    ]
+    allowed, reason = gate.decide(NOW, [run(100)], lambda _: jobs_cooldown, 2, 60, "100", current_run_attempt=2)
+    assert not allowed and reason == "The routine started 10 minutes ago. Wait until 14:55 Pacific (60 minute cooldown)."
+
+    jobs_failed_first = [
+        {**gate_job("failure"), "run_attempt": 1},
+        {**gate_job(None, status="in_progress"), "run_attempt": 2},
+    ]
+    assert gate.decide(NOW, [run(100)], lambda _: jobs_failed_first, 1, 60, "100", current_run_attempt=2)[0]
+
+
+@pytest.mark.parametrize("bad_attempt", [0, -1, True, "abc"])
+def test_invalid_current_run_attempt_fails_closed(bad_attempt):
+    allowed, reason = gate.decide(NOW, [], lambda _: [], 1, 60, "100", current_run_attempt=bad_attempt)
+    assert not allowed and reason == gate.UNVERIFIED
+
+
+def test_rerun_without_job_run_attempt_fails_closed():
+    allowed, reason = gate.decide(NOW, [run(100)], lambda _: [gate_job("failure")], 1, 60, "100", current_run_attempt=2)
+    assert not allowed and reason == gate.UNVERIFIED
 
 
 def test_custom_cap_counts_each_run_once_and_pluralizes():
@@ -216,15 +250,33 @@ def test_main_uses_daily_cap_override(main_env, monkeypatch, capsys):
     assert main_env.read_text() == "Earlier summary\n"
 
 
+def test_main_rerun_checks_earlier_attempt_of_current_run(main_env, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    current_jobs_url = f"{gate.API}/repos/owner/scout/actions/runs/100/jobs?filter=all&per_page=100"
+    calls = serve_pages(monkeypatch, {
+        RUNS_URL: ({"workflow_runs": [run(100)]}, None),
+        current_jobs_url: ({"jobs": [
+            {**gate_job("success"), "run_attempt": 1},
+            {**gate_job(None, status="in_progress"), "run_attempt": 2},
+        ]}, None),
+    })
+    assert gate.main() == 1
+    check_refusal(capsys, main_env, CAP_REASON)
+    assert calls == [RUNS_URL, current_jobs_url]
+
+
 def test_nightly_workflow_gate_permissions_and_scan_condition():
     workflow = (gate.TARGETS.parent / ".github/workflows/nightly.yml").read_text()
     assert f"- name: {gate.ROUTINE_STEP}\n" in workflow
     gate_job_text, remaining_jobs = workflow.split("\njobs:\n  gate:\n", 1)[1].split("\n  scan:\n", 1)
-    scan_job_text = remaining_jobs.split("\n  deploy:\n", 1)[0]
+    scan_job_text, deploy_job_text = remaining_jobs.split("\n  deploy:\n", 1)
     assert "    if: github.event_name == 'workflow_dispatch'\n" in gate_job_text
     permissions = re.search(r"^    permissions:\n((?:^      \S[^\n]*\n)+)", gate_job_text, re.M)
     assert permissions and set(permissions[1].splitlines()) == {"      contents: read", "      actions: read"}
+    assert "persist-credentials: false" in gate_job_text
     assert "GH_TOKEN: ${{ github.token }}" in gate_job_text and "secrets." not in gate_job_text
     assert "run: python scripts/run_again_gate.py" in gate_job_text
     assert "    needs: gate\n" in scan_job_text
     assert "    if: ${{ !cancelled() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') }}\n" in scan_job_text
+    assert "    needs: scan\n" in deploy_job_text
+    assert "    if: ${{ !cancelled() && needs.scan.result == 'success' }}\n" in deploy_job_text

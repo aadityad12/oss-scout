@@ -43,6 +43,20 @@ def conclusion_of(record: dict) -> str | None:
     return conclusion
 
 
+def parse_attempt(value: int | str | None) -> int:
+    if value is None:
+        return 1
+    if type(value) is int:
+        attempt = value
+    elif isinstance(value, str) and value.isdigit():
+        attempt = int(value)
+    else:
+        raise ValueError("Expected a positive integer run attempt")
+    if attempt < 1:
+        raise ValueError("Expected a positive integer run attempt")
+    return attempt
+
+
 def decide(
     now: datetime,
     runs: Iterable[dict],
@@ -50,10 +64,13 @@ def decide(
     cap: int,
     cooldown_minutes: int,
     current_run_id: int | str,
+    *,
+    current_run_attempt: int | str | None = None,
 ) -> tuple[bool, str]:
     try:
         if any(type(limit) is not int or limit < 0 for limit in (cap, cooldown_minutes)):
             return False, UNVERIFIED
+        current_attempt = parse_attempt(current_run_attempt)
         if cap == 0:
             return False, "Daily limit reached: extra runs are disabled (0 per Pacific day)."
 
@@ -61,7 +78,8 @@ def decide(
         midnight_utc = midnight.astimezone(timezone.utc)
         now = now.astimezone(timezone.utc)
         cutoff = now - timedelta(hours=24)
-        seen = {str(current_run_id)}
+        current_key = str(current_run_id)
+        seen: set[str] = set()
         used = 0
         newest_routine = None
 
@@ -69,9 +87,13 @@ def decide(
             run_id = run["id"]
             if type(run_id) not in (int, str) or not run_id:
                 raise ValueError("Expected a workflow run ID")
-            if str(run_id) in seen:
+            run_key = str(run_id)
+            if run_key in seen:
                 continue
-            seen.add(str(run_id))
+            seen.add(run_key)
+            is_current = run_key == current_key
+            if is_current and current_attempt == 1:
+                continue
             created = timestamp(run["created_at"])
             updated = run.get("updated_at")
             event = run["event"]
@@ -91,6 +113,12 @@ def decide(
             for job in jobs:
                 if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"]:
                     raise ValueError("Expected a named job")
+                if is_current:
+                    raw_attempt = job.get("run_attempt")
+                    if type(raw_attempt) is not int or raw_attempt < 1:
+                        raise ValueError("Expected a positive integer job run_attempt")
+                    if raw_attempt >= current_attempt:
+                        continue
                 if counts_today and job["name"] == "gate":
                     conclusion = conclusion_of(job)
                     if conclusion == "success" or (
@@ -160,6 +188,7 @@ def main() -> int:
         cooldown_minutes = settings.get("run_again_cooldown_minutes", DEFAULT_COOLDOWN_MINUTES)
         repo = os.environ["GITHUB_REPOSITORY"]
         current_run_id = os.environ["GITHUB_RUN_ID"]
+        current_run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
         token = os.environ["GH_TOKEN"]
         if not (repo and current_run_id and token):
             raise ValueError("Missing GitHub Actions environment")
@@ -169,10 +198,24 @@ def main() -> int:
             url = f"{actions}/runs/{quote(str(run_id), safe='')}/jobs?filter=all&per_page=100"
             return list(api_items(url, "jobs", token))
 
-        # Runs are ordered by creation. An older run may have been updated recently,
-        # so inspect timestamps across pages and fetch jobs only for relevant runs.
-        runs = api_items(f"{actions}/workflows/nightly.yml/runs?per_page=100", "workflow_runs", token)
-        allowed, reason = decide(datetime.now(timezone.utc), runs, jobs_of, cap, cooldown_minutes, current_run_id)
+        now = datetime.now(timezone.utc)
+        # GitHub Actions only allows re-running workflows within 30 days of creation,
+        # so filtering to the last 31 days bounds pagination while catching all re-runs.
+        since = (now - timedelta(days=31)).strftime("%Y-%m-%d")
+        runs = api_items(
+            f"{actions}/workflows/nightly.yml/runs?created={quote(f'>={since}', safe='')}&per_page=100",
+            "workflow_runs",
+            token,
+        )
+        allowed, reason = decide(
+            now,
+            runs,
+            jobs_of,
+            cap,
+            cooldown_minutes,
+            current_run_id,
+            current_run_attempt=current_run_attempt,
+        )
     except Exception:
         allowed, reason = False, UNVERIFIED
 

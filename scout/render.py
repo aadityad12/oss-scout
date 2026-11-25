@@ -19,13 +19,14 @@ the same as `briefings.slug`) so an email link can open it. The payload is:
   log          {actions, runs}: your taps, newest first, and recent nightly scans
   digest, login, generated_at
 
-Nothing secret goes in. The payload uses saved scout data and dashboard settings.
+Nothing secret goes in: no tokens, only saved scout data and dashboard settings.
 
 `render` also writes the same payload, plus a version number, to `dashboard.json` next to
 `dashboard.html` so other programs can read it without parsing the page. The rules for that file
 (its fields are listed in docs/dashboard-json.md):
 
-  - Use the same saved data and settings as the page. Never add a field that reads the environment.
+  - Nothing secret goes in, exactly as for the page: no tokens, only saved scout data and
+    dashboard settings. Never add a field that reads the environment.
   - Adding a field keeps `SCHEMA_VERSION`.
   - Removing a field, renaming it, or changing its type bumps `SCHEMA_VERSION`.
   - Readers must ignore fields they don't know and refuse a `schema_version` they don't know.
