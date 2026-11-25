@@ -5,8 +5,8 @@ to each other in the data directory: `dashboard.html` (the page) and `dashboard.
 data as a plain file, plus a version number). The file is written to a temporary file and then
 renamed, so a reader never sees half of it. It is not escaped for embedding in a page.
 
-It is built by `build_payload()` in `scout/render.py` and holds only what `state.json`, the
-briefings and `digest.json` already hold. Nothing secret goes in.
+It is built by `build_payload()` in `scout/render.py` from saved scout data and dashboard
+settings. Nothing secret goes in.
 
 ## Rules
 
@@ -28,6 +28,7 @@ briefings and `digest.json` already hold. Nothing secret goes in.
 | `in_flight` | list | Open PRs, plus claimed, submitting and approved items (and ones stuck after a failed send). |
 | `portfolio` | object | Exactly what the public page shows (`public.build_payload`). |
 | `limits` | object | `{featured, summary}`: the most featured PRs and the longest summary the portfolio allows. |
+| `run_again` | object | `{daily_cap, cooldown_minutes}`: the extra manual nightly runs allowed per Pacific day and the minutes to wait after the nightly routine starts. Both are integers from `[settings]` in `targets.toml`, with defaults of `1` and `60`. |
 | `projects` | object | `{home, repos}`: the home-project recommendation and the repo research. |
 | `log` | object | `{actions, runs}`: your taps and the recent nightly scans, newest first. |
 

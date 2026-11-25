@@ -400,6 +400,19 @@ def test_dashboard_renders_with_no_data(tmp_path):
     assert embedded(render.render(config.load(), tmp_path, statemod.load(tmp_path)).read_text())["to_do"] == 0
 
 
+def test_run_again_limits_use_defaults_and_targets_overrides(tmp_path):
+    targets = tmp_path / "targets.toml"
+    targets.write_text('[user]\nlogin = "scout"\n\n[settings]\n')
+    st = statemod.load(tmp_path)
+    payload = render.build_payload(config.load(targets), tmp_path, st, now=NOW)
+    assert payload["run_again"] == {"daily_cap": 1, "cooldown_minutes": 60}
+
+    with targets.open("a") as f:
+        f.write("run_again_daily_cap = 2\nrun_again_cooldown_minutes = 45\n")
+    payload = render.build_payload(config.load(targets), tmp_path, st, now=NOW)
+    assert payload["run_again"] == {"daily_cap": 2, "cooldown_minutes": 45}
+
+
 def test_inbox_items_carry_a_headline_apart_from_the_lines(tmp_path):
     _, _, p = payload_of(tmp_path)
     for gr in p["inbox"]:
@@ -418,7 +431,7 @@ def test_render_writes_dashboard_json_next_to_the_page(tmp_path):
     doc = json.loads((data / "dashboard.json").read_text())
     assert doc["schema_version"] == render.SCHEMA_VERSION == 1
     assert set(doc) == {"schema_version", "generated_at", "login", "digest", "inbox", "to_do", "note",
-                        "in_flight", "portfolio", "limits", "projects", "log"}
+                        "in_flight", "portfolio", "limits", "run_again", "projects", "log"}
     assert [g["id"] for g in doc["inbox"]] == ["waiting", "ready", "pairing", "briefings", "snoozed"]
     assert all(set(g) == {"id", "label", "items"} for g in doc["inbox"])
 

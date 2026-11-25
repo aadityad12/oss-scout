@@ -39,6 +39,8 @@ claim_window_days = 21       # "I'll take this" comments newer than this = claim
 stale_pr_days = 90           # a linked open PR untouched this long counts as abandoned and no longer blocks
 skip_after_days = 14         # untouched suggestions become "skipped"
 pass_cooldown_days = 60      # issues the Claude step turned down stay out this long
+run_again_daily_cap = 1      # extra manual runs per Pacific day
+run_again_cooldown_minutes = 60  # minutes to wait after the routine starts
 # "Let the data decide": go wide until this date, then recommend home projects.
 # Pushed out to explore again with the large company-backed project list.
 wide_phase_until = "2026-12-31"

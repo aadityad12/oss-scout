@@ -14,18 +14,18 @@ the same as `briefings.slug`) so an email link can open it. The payload is:
   in_flight    open PRs, plus claimed, submitting and approved items
   portfolio    exactly `public.build_payload`, the same data the public page shows
   limits       what the portfolio buttons enforce (featured PRs, summary length)
+  run_again    {daily_cap, cooldown_minutes}: limits on manual nightly runs
   projects     {home, repos}: the repo research
   log          {actions, runs}: your taps, newest first, and recent nightly scans
   digest, login, generated_at
 
-Nothing secret goes in: only what state.json, the briefings and digest.json already hold.
+Nothing secret goes in. The payload uses saved scout data and dashboard settings.
 
 `render` also writes the same payload, plus a version number, to `dashboard.json` next to
 `dashboard.html` so other programs can read it without parsing the page. The rules for that file
 (its fields are listed in docs/dashboard-json.md):
 
-  - Nothing secret goes in, exactly as for the page: no tokens, only what state.json, the
-    briefings and digest.json already hold. Never add a field that reads the environment.
+  - Use the same saved data and settings as the page. Never add a field that reads the environment.
   - Adding a field keeps `SCHEMA_VERSION`.
   - Removing a field, renaming it, or changing its type bumps `SCHEMA_VERSION`.
   - Readers must ignore fields they don't know and refuse a `schema_version` they don't know.
@@ -203,6 +203,8 @@ def build_payload(cfg: Config, data: Path, st: dict, now: datetime | None = None
         "in_flight": flight,
         "portfolio": public.build_payload(cfg, st, now=now),
         "limits": {"featured": public.MAX_FEATURED, "summary": 200},
+        "run_again": {"daily_cap": cfg.settings.get("run_again_daily_cap", 1),
+                      "cooldown_minutes": cfg.settings.get("run_again_cooldown_minutes", 60)},
         "projects": {"home": home_recommendation(cfg, st), "repos": repos},
         "log": {"actions": st.get("actions", [])[-LOG_ACTIONS:][::-1],
                 "runs": st.get("runs", [])[-LOG_RUNS:][::-1]},
