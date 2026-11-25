@@ -239,6 +239,14 @@ def cmd_act(args, cfg, data, gh) -> None:
     sys.exit(run(cfg, data, args.key, args.action, args.title, body, args.dry_run))
 
 
+def _read_stdin_utf8() -> str:
+    if sys.stdin is None:
+        raise OSError("standard input is closed")
+    if hasattr(sys.stdin, "buffer"):
+        return sys.stdin.buffer.read().decode("utf-8")
+    return sys.stdin.read()
+
+
 def cmd_check_text(args) -> int:
     """Validate PR/comment text offline with zero disk or network side effects."""
     if args.list_markers:
@@ -250,12 +258,14 @@ def cmd_check_text(args) -> int:
         except (OSError, UnicodeDecodeError) as e:
             print(f"error: could not read {args.body_file}: {e}", file=sys.stderr)
             return 2
-    elif not sys.stdin.isatty():
-        body = sys.stdin.read()
-    elif args.title is not None and args.disclosure is None:
+    elif args.no_body:
         body = None
     else:
-        body = sys.stdin.read()
+        try:
+            body = _read_stdin_utf8()
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"error: could not read stdin: {e}", file=sys.stderr)
+            return 2
     problems = text_problems(args.title, body, args.disclosure)
     if args.json:
         print(json.dumps({"ok": not problems, "problems": problems}))
@@ -323,9 +333,11 @@ def main(argv: list[str] | None = None) -> None:
     ct = sub.add_parser("check-text")
     ct.add_argument("--title", default=None, help="PR title or commit message to check")
     ct.add_argument("--disclosure", default=None, help="required AI-disclosure sentence")
-    ct.add_argument("--body-file", default=None, help="file with PR body or comment (otherwise read stdin)")
+    ct_body = ct.add_mutually_exclusive_group()
+    ct_body.add_argument("--body-file", default=None, help="file with PR body or comment (otherwise read UTF-8 stdin)")
+    ct_body.add_argument("--no-body", action="store_true", help="check only --title without reading stdin")
     ct.add_argument("--json", action="store_true", help="print result as JSON")
-    ct.add_argument("--list-markers", action="store_true", help="print the AI-marker list as JSON and exit")
+    ct.add_argument("--list-markers", action="store_true", help="print the AI-marker list as JSON and exit (ignores other inputs)")
     rc = sub.add_parser("refresh-check")
     rc.add_argument("--key", required=True, help="owner/repo#123")
     rc.add_argument("--out", required=True, help="directory for new.patch and verdict.json")

@@ -149,17 +149,120 @@ def test_cli_body_file_and_missing_file(tmp_path, capsys):
     assert err.strip() != ""
 
 
-def test_cli_tty_with_title_skips_stdin(monkeypatch, capsys):
-    class TtyStdin:
-        def isatty(self):
-            return True
+def test_cli_tty_stdin_is_read_consistently(monkeypatch, capsys):
+    assert run_cli(["--title", "Fix crash", "--json"], stdin_text="Generated with a tool",
+                   isatty=True, monkeypatch=monkeypatch) == 1
+    assert json.loads(capsys.readouterr().out) == {"ok": False, "problems": ["the text contains an AI marker"]}
 
+
+def test_cli_no_body_checks_title_only_without_reading_stdin(monkeypatch, capsys):
+    class UnreadableStdin:
         def read(self):
-            raise AssertionError("should not block reading stdin when --title is passed on a tty")
+            raise AssertionError("--no-body must not read stdin")
 
-    monkeypatch.setattr(sys, "stdin", TtyStdin())
-    assert run_cli(["--title", "Fix crash"]) == 0
+    monkeypatch.setattr(sys, "stdin", UnreadableStdin())
+    assert run_cli(["--title", "Fix crash", "--no-body"]) == 0
     assert capsys.readouterr().out.strip() == "ok"
+
+    assert run_cli(["--title", "bad\ntitle", "--no-body", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "problems": [f"the title must be one line, 1-{act.MAX_TITLE} characters"],
+    }
+
+
+def test_cli_closed_stdin_exits_2(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", None)
+    assert run_cli(["--title", "Fix crash", "--json"]) == 2
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "error: could not read stdin" in out.err
+
+
+def test_subprocess_stdin_utf8_regardless_of_locale(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "LC_ALL", "LANG")}
+    env["SCOUT_DATA_DIR"] = str(tmp_path / "no-data")
+    env["PYTHONPATH"] = str(config.ROOT)
+    env["PYTHONIOENCODING"] = "latin-1"
+    env["LC_ALL"] = "C"
+    env["PYTHONUTF8"] = "0"
+
+    proc = subprocess.run(
+        [sys.executable, "-B", "-m", "scout", "check-text", "--title", "Fix crash", "--json"],
+        input="hi \U0001F916".encode("utf-8"),
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 1
+    assert json.loads(proc.stdout.decode("utf-8")) == {"ok": False, "problems": ["the text contains an AI marker"]}
+    assert proc.stderr == b""
+
+
+def test_subprocess_stdin_invalid_utf8_exits_2(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+    env["SCOUT_DATA_DIR"] = str(tmp_path / "no-data")
+    env["PYTHONPATH"] = str(config.ROOT)
+
+    proc = subprocess.run(
+        [sys.executable, "-B", "-m", "scout", "check-text", "--title", "Fix crash", "--json"],
+        input=b"hi \xff\xfe",
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 2
+    assert proc.stdout == b""
+    stderr = proc.stderr.decode("utf-8")
+    assert stderr.startswith("error: could not read stdin:")
+    assert "Traceback" not in stderr
+
+
+def test_subprocess_no_body_with_devnull_stdin(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+    env["SCOUT_DATA_DIR"] = str(tmp_path / "no-data")
+    env["PYTHONPATH"] = str(config.ROOT)
+
+    proc = subprocess.run(
+        [sys.executable, "-B", "-m", "scout", "check-text", "--title", "Fix crash", "--no-body", "--json"],
+        stdin=subprocess.DEVNULL,
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout) == {"ok": True, "problems": []}
+    assert proc.stderr == ""
+
+
+def test_subprocess_readonly_checkout_writes_nothing(tmp_path):
+    import shutil
+
+    ro_root = tmp_path / "ro-scout"
+    shutil.copytree(config.ROOT / "scout", ro_root / "scout", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    for p in [ro_root / "scout", ro_root]:
+        p.chmod(0o555)
+    try:
+        env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+        env["SCOUT_DATA_DIR"] = str(tmp_path / "no-data")
+        env["PYTHONPATH"] = str(ro_root)
+        proc = subprocess.run(
+            [sys.executable, "-m", "scout", "check-text", "--title", "Fix crash", "--json"],
+            input="fix a crash",
+            text=True,
+            capture_output=True,
+            cwd=tmp_path,
+            env=env,
+        )
+        assert proc.returncode == 0
+        assert json.loads(proc.stdout) == {"ok": True, "problems": []}
+        assert proc.stderr == ""
+        assert not (ro_root / "scout" / "__pycache__").exists()
+        assert not (tmp_path / "no-data").exists()
+    finally:
+        for p in [ro_root, ro_root / "scout"]:
+            p.chmod(0o755)
 
 
 # -- end-to-end subprocess & security -----------------------------------------
