@@ -228,7 +228,7 @@ def merge(path: Path, new_rows: list[dict], add_since: datetime | None = None) -
         for field in ("language", "owner_type", "ai_policy"):
             clean[field] = _safe_label(clean[field])
         prev = merged.get(k)
-        if prev is not None and prev.get("state_at_cut") == "open":
+        if prev is not None:
             for field in OPENING_FIELDS:
                 if prev.get(field) is not None:
                     clean[field] = prev[field]

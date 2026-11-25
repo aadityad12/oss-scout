@@ -140,19 +140,26 @@ def predict_proba(model: dict, feature_row: dict) -> float:
     return sigmoid(model["intercept"] + sum(w * v for w, v in zip(model["weights"], x)))
 
 
+SUPPORTED_VERSION = 1
+
+
 def _valid(model) -> bool:
     try:
         if not isinstance(model, dict) or any(k not in model for k in REQUIRED):
             return False
+        if type(model["version"]) is not int or model["version"] != SUPPORTED_VERSION:
+            return False
         if not isinstance(model["trained_at"], str):
             return False
         numeric, cats = model["numeric"], model["categories"]
-        if not isinstance(numeric, list) or any(n not in NUMERIC for n in numeric):
+        if not isinstance(numeric, list) or not numeric or len(set(numeric)) != len(numeric):
+            return False
+        if any(n not in NUMERIC for n in numeric):
             return False
         if not isinstance(cats, dict) or any(c not in CATEGORICAL or not isinstance(v, list) or not v
                                              or not all(isinstance(lvl, str) for lvl in v) for c, v in cats.items()):
             return False
-        if model["features"] != feature_names(numeric, cats):
+        if not model["features"] or model["features"] != feature_names(numeric, cats):
             return False
         w = model["weights"]
         if not isinstance(w, list) or len(w) != len(model["features"]) or not all(_present(v) for v in w):

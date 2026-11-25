@@ -480,7 +480,9 @@ def test_load_accepts_a_fresh_passing_model(tmp_path):
 
 @pytest.mark.parametrize("change", [
     {"beats_baseline": False}, {"beats_baseline": "true"}, {"weights": [0.1, 0.2]}, {"intercept": "x"},
-    {"trained_at": "not a date"}, {"trained_at": 12345}, {"features": ["nope"]}, {"numeric": ["unknown_input"]},
+    {"trained_at": "not a date"}, {"trained_at": 12345}, {"version": []}, {"version": 2}, {"version": True},
+    {"features": ["nope"]}, {"numeric": ["unknown_input"]},
+    {"numeric": [], "categories": {}, "features": [], "weights": [], "means": {}, "scales": {}},
     {"scales": {}}, {"scales": "bad"}, {"scales": True}, {"means": [1]}, {"means": 123},
     {"categories": {"language": []}}, {"intercept": 10 ** 400},
     {"weights": [10 ** 400] + [0.0] * (len(FIXTURE["model"]["features"]) - 1)}])
@@ -610,7 +612,19 @@ def test_render_hides_cached_merge_prob_when_setting_is_off(cfg, tmp_path):
     cfg.settings["use_merge_model"] = False
     off = render.build_payload(cfg, tmp_path, st, now=NOW)
     assert "merge_prob" not in off["projects"]["repos"][0]
+
+    # Setting on, but no passing model file: still hidden.
     cfg.settings["use_merge_model"] = True
+    no_model = render.build_payload(cfg, tmp_path, st, now=NOW)
+    assert "merge_prob" not in no_model["projects"]["repos"][0]
+
+    # Setting on, with a failing model: still hidden.
+    write_model(tmp_path, trained_at=(NOW - timedelta(days=1)).isoformat(), beats_baseline=False)
+    failing = render.build_payload(cfg, tmp_path, st, now=NOW)
+    assert "merge_prob" not in failing["projects"]["repos"][0]
+
+    # Setting on, with a fresh passing model: exposed.
+    write_model(tmp_path, trained_at=(NOW - timedelta(days=1)).isoformat(), beats_baseline=True)
     on = render.build_payload(cfg, tmp_path, st, now=NOW)
     assert on["projects"]["repos"][0]["merge_prob"] == 0.65
 
@@ -636,7 +650,7 @@ def test_prdata_sanitizes_labels_preserves_opening_fields_and_score_survives_wri
     out = prdata.static_features(bad_meta)
     assert out["language"] is None and out["owner_type"] is None and out["ai_policy"] == "none"
 
-    # Incremental update preserves first-seen opening fields when PR closes
+    # Incremental updates preserve first-seen opening fields across open->closed AND closed->closed updates
     p = tmp_path / prdata.FILE
     open_row = make_rows()[0]
     open_row.update(state_at_cut="open", closed_at=None, merged=False, title_len=12, body_len=50,
@@ -645,6 +659,7 @@ def test_prdata_sanitizes_labels_preserves_opening_fields_and_score_survives_wri
     closed_row = {**open_row, "state_at_cut": "closed", "closed_at": iso(1), "merged": True,
                   "title_len": 99, "body_len": 999, "draft": False, "author_assoc": "CONTRIBUTOR"}
     prdata.merge(p, [closed_row])
+    prdata.merge(p, [{**closed_row, "title_len": 150, "body_len": 1500}])
     saved = prdata.read(p)[0]
     assert saved["merged"] is True and saved["state_at_cut"] == "closed"
     assert saved["title_len"] == 12 and saved["body_len"] == 50 and saved["draft"] is True and saved["author_assoc"] == "NONE"

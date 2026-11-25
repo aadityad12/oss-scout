@@ -8,8 +8,9 @@ The dataset comes from scripts/build_merge_dataset.py. Steps:
   1. Sort by (created_at, repo, number) and split by time: the oldest 60% train, the next 20%
      validation, the newest 20% test. A split boundary never falls between rows with the same
      created_at, so every test row was opened after every train row.
-  2. Pick the regularization C on validation (AUC), then refit on train + validation. Missing values,
-     category levels, means and scales come from the rows being fit, never from the test split.
+  2. Pick the regularization C on validation (AUC), then evaluate the model fit on the training
+     split (60%). Missing values, category levels, means and scales come from the rows being fit,
+     never from the test split.
   3. Score the test split once: AUC with a 2,000-resample bootstrap 95% interval, Brier score,
      a 10-bin calibration table and ECE, next to the baselines on the same rows.
   4. Leave-one-project-out: for each project, fit on all the others and predict it.
@@ -37,6 +38,7 @@ from scout.score import _scale  # noqa: E402
 
 VERSION = 1
 C_GRID = (0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0)
+DEFAULT_C = 0.01  # fixed predeclared fallback when a sparse LOPO fold cannot tune C internally
 MIN_LEVEL = 30  # a language / policy / owner type needs this many fit rows to get its own weight
 N_RESAMPLES, SEED = 2000, 42
 THIN = mergemodel.THIN
@@ -184,7 +186,7 @@ def _choose_c(train_rows: list[dict], val_rows: list[dict]) -> tuple[float, list
     return best_c, tuning
 
 
-def lopo(rows: list[dict], default_c: float = 0.01) -> dict:
+def lopo(rows: list[dict], default_c: float = DEFAULT_C) -> dict:
     """Fit on every other project (choosing C inside each fold without seeing the held-out project),
     predict the held-out one, and compute AUC over all pooled predictions."""
     y, model_s, base_s, per_project = [], [], {k: [] for k in BASELINES}, {}
@@ -310,7 +312,7 @@ def run(rows: list[dict], meta: dict, now: datetime | None = None) -> dict:
     best_brier_name = min(BASELINES, key=lambda k: res[k]["brier"])
     table = metrics.calibration_table(y, p, 10)
     ece = metrics.expected_calibration_error(table)
-    lo = lopo(rows, default_c=best_c)
+    lo = lopo(rows, default_c=DEFAULT_C)
     lopo_base = {k: lo[f"{k}_auc"] for k in BASELINES if lo[f"{k}_auc"] is not None}
     best_lopo = max(lopo_base.values()) if lopo_base else None
     ok, reasons = decide(len(test), sum(y), res["model"]["auc"], res[best]["auc"],
