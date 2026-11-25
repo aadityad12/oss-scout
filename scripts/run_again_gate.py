@@ -99,7 +99,9 @@ def decide(
             event = run["event"]
             if not isinstance(event, str) or not event:
                 raise ValueError("Expected a workflow run event")
-            counts_today = created >= midnight_utc and event == "workflow_dispatch"
+            counts_today = event == "workflow_dispatch" and (
+                created >= midnight_utc or (updated is not None and timestamp(updated) >= midnight_utc)
+            )
             check_cooldown = cooldown_minutes > 0 and (
                 created >= cutoff or (updated is not None and timestamp(updated) >= cutoff)
             )
@@ -109,7 +111,7 @@ def decide(
             jobs = jobs_of(run_id)
             if not isinstance(jobs, list):
                 raise ValueError("Expected a list of jobs")
-            used_slot = False
+            used_attempts: set[int | None] = set()
             for job in jobs:
                 if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"]:
                     raise ValueError("Expected a named job")
@@ -124,7 +126,18 @@ def decide(
                     if conclusion == "success" or (
                         conclusion is None and job.get("status") == "in_progress"
                     ):
-                        used_slot = True
+                        job_time = job.get("started_at") or job.get("created_at")
+                        if job_time is not None:
+                            attempt_at = timestamp(job_time)
+                        elif created >= midnight_utc:
+                            attempt_at = created
+                        else:
+                            raise ValueError("Expected a gate job timestamp")
+                        if attempt_at >= midnight_utc:
+                            attempt_key = job.get("run_attempt")
+                            if attempt_key is not None and (type(attempt_key) is not int or attempt_key < 1):
+                                raise ValueError("Expected a positive integer job run_attempt")
+                            used_attempts.add(attempt_key)
                 if not check_cooldown:
                     continue
                 if job["name"] == "scan" and "steps" not in job and conclusion_of(job) == "success":
@@ -139,7 +152,7 @@ def decide(
                         completed = timestamp(step["completed_at"])
                         if completed >= cutoff and (newest_routine is None or completed > newest_routine):
                             newest_routine = completed
-            used += used_slot
+            used += len(used_attempts)
 
         if used >= cap:
             noun = "run" if cap == 1 else "runs"

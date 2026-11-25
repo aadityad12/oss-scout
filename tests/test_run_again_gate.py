@@ -119,6 +119,37 @@ def test_rerun_without_job_run_attempt_fails_closed():
     assert not allowed and reason == gate.UNVERIFIED
 
 
+def test_rerun_of_older_manual_run_counts_today_by_gate_start():
+    yesterday = NOW - timedelta(hours=20)
+    older_rerun_today = run(50, created=yesterday, updated=NOW - timedelta(hours=2))
+    jobs = [
+        {**gate_job("success"), "run_attempt": 1, "started_at": yesterday.isoformat()},
+        {**gate_job("success"), "run_attempt": 2, "started_at": (NOW - timedelta(hours=2)).isoformat()},
+    ]
+    allowed, reason = gate.decide(NOW, [older_rerun_today], lambda _: jobs, 1, 60, "100")
+    assert not allowed and reason == CAP_REASON
+
+    # Only attempt 1 ran yesterday (e.g., scan finished after midnight): does not use today's slot.
+    finished_after_midnight = [
+        {**gate_job("success"), "run_attempt": 1, "started_at": yesterday.isoformat()},
+    ]
+    assert gate.decide(NOW, [older_rerun_today], lambda _: finished_after_midnight, 1, 60, "100")[0]
+
+    # Missing timestamp on a gate job for an older run updated today fails closed.
+    allowed, reason = gate.decide(NOW, [older_rerun_today], lambda _: [gate_job("success")], 1, 60, "100")
+    assert not allowed and reason == gate.UNVERIFIED
+
+
+def test_multiple_same_day_rerun_attempts_each_consume_a_slot():
+    jobs = [
+        {**gate_job("success"), "run_attempt": 1, "started_at": (NOW - timedelta(hours=4)).isoformat()},
+        {**gate_job("success"), "run_attempt": 2, "started_at": (NOW - timedelta(hours=2)).isoformat()},
+    ]
+    allowed, reason = gate.decide(NOW, [run(50)], lambda _: jobs, 2, 60, "100")
+    assert not allowed
+    assert reason == "Daily limit reached: 2 extra runs per Pacific day, 2 used. The next one is allowed after midnight Pacific."
+
+
 def test_custom_cap_counts_each_run_once_and_pluralizes():
     runs = [run(1), run("1"), run(2)]
     jobs_of = lambda _: [gate_job(), gate_job()]
@@ -153,6 +184,7 @@ def main_env(monkeypatch, tmp_path):
     monkeypatch.setattr(gate, "datetime", FixedClock)
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/scout")
     monkeypatch.setenv("GITHUB_RUN_ID", "100")
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
     monkeypatch.setenv("GH_TOKEN", TOKEN)
     summary = tmp_path / "summary.md"
     summary.write_text("Earlier summary\n")
