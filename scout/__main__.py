@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
@@ -243,7 +244,8 @@ def _read_stdin_utf8() -> str:
     if sys.stdin is None:
         raise OSError("standard input is closed")
     if hasattr(sys.stdin, "buffer"):
-        return sys.stdin.buffer.read().decode("utf-8")
+        text = sys.stdin.buffer.read().decode("utf-8")
+        return io.StringIO(text, newline=None).read()
     return sys.stdin.read()
 
 

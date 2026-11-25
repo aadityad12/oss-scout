@@ -236,17 +236,58 @@ def test_subprocess_no_body_with_devnull_stdin(tmp_path):
     assert proc.stderr == ""
 
 
+def test_subprocess_crlf_parity_between_stdin_and_body_file(tmp_path):
+    body_bytes = (b"a" * (act.MAX_BODY - 1)) + b"\r\n"
+    body_file = tmp_path / "crlf.txt"
+    body_file.write_bytes(body_bytes)
+    env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+    env["SCOUT_DATA_DIR"] = str(tmp_path / "no-data")
+    env["PYTHONPATH"] = str(config.ROOT)
+
+    from_file = subprocess.run(
+        [sys.executable, "-B", "-m", "scout", "check-text", "--title", "Fix crash", "--body-file", str(body_file), "--json"],
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    from_stdin = subprocess.run(
+        [sys.executable, "-B", "-m", "scout", "check-text", "--title", "Fix crash", "--json"],
+        input=body_bytes,
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert from_file.returncode == from_stdin.returncode == 0
+    assert json.loads(from_file.stdout) == json.loads(from_stdin.stdout) == {"ok": True, "problems": []}
+
+
 def test_subprocess_readonly_checkout_writes_nothing(tmp_path):
     import shutil
 
     ro_root = tmp_path / "ro-scout"
     shutil.copytree(config.ROOT / "scout", ro_root / "scout", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    # Verify both writable checkout with -B and read-only checkout without -B write zero bytecode or data files.
+    env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+    env["SCOUT_DATA_DIR"] = str(tmp_path / "no-data")
+    env["PYTHONPATH"] = str(ro_root)
+    proc_b = subprocess.run(
+        [sys.executable, "-B", "-m", "scout", "check-text", "--title", "Fix crash", "--json"],
+        input="fix a crash",
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc_b.returncode == 0
+    assert json.loads(proc_b.stdout) == {"ok": True, "problems": []}
+    assert not (ro_root / "scout" / "__pycache__").exists()
+    assert not (tmp_path / "no-data").exists()
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return
     for p in [ro_root / "scout", ro_root]:
         p.chmod(0o555)
     try:
-        env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
-        env["SCOUT_DATA_DIR"] = str(tmp_path / "no-data")
-        env["PYTHONPATH"] = str(ro_root)
         proc = subprocess.run(
             [sys.executable, "-m", "scout", "check-text", "--title", "Fix crash", "--json"],
             input="fix a crash",
