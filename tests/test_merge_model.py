@@ -480,10 +480,18 @@ def test_load_accepts_a_fresh_passing_model(tmp_path):
 
 @pytest.mark.parametrize("change", [
     {"beats_baseline": False}, {"beats_baseline": "true"}, {"weights": [0.1, 0.2]}, {"intercept": "x"},
-    {"trained_at": "not a date"}, {"features": ["nope"]}, {"numeric": ["unknown_input"]},
-    {"scales": {}}, {"categories": {"language": []}}])
+    {"trained_at": "not a date"}, {"trained_at": 12345}, {"features": ["nope"]}, {"numeric": ["unknown_input"]},
+    {"scales": {}}, {"scales": "bad"}, {"scales": True}, {"means": [1]}, {"means": 123},
+    {"categories": {"language": []}}, {"intercept": 10 ** 400},
+    {"weights": [10 ** 400] + [0.0] * (len(FIXTURE["model"]["features"]) - 1)}])
 def test_load_refuses_bad_models(tmp_path, change):
     assert mergemodel.load(write_model(tmp_path, **change), now=TRAINED + timedelta(days=10)) is None
+
+
+def test_load_refuses_bad_max_age_days(tmp_path):
+    path = write_model(tmp_path)
+    for bad in ("90", None, -1, True, float("nan")):
+        assert mergemodel.load(path, now=TRAINED + timedelta(days=10), max_age_days=bad) is None
 
 
 def test_load_refuses_missing_stale_and_malformed(tmp_path):
@@ -584,14 +592,94 @@ def test_run_attaches_probabilities_only_with_a_passing_model(cfg, tmp_path):
         assert rank.score_issue(golden_issue(), {**GOLDEN_REPO, **repos["o/r"], "friendliness": 0.7}, cfg, {},
                                 now=NOW) == GOLDEN
     write_model(tmp_path, trained_at=trained)
-    assert cli.apply_merge_model(cfg, tmp_path, repos, cached) == 1
+    assert cli.apply_merge_model(cfg, tmp_path, repos, cached) == 2
     assert 0 <= repos["o/r"]["merge_prob"] <= 1 and "merge_prob" not in repos["skip/me"]
+    assert 0 <= cached["old/one"]["merge_prob"] <= 1
     info = cli.repo_info(repos["o/r"])
     assert info["merge_prob"] == repos["o/r"]["merge_prob"]
     assert "merge_prob" not in cli.repo_info({"friendliness": 0.5})
     scored = rank.score_issue(golden_issue(), {**GOLDEN_REPO, "merge_prob": repos["o/r"]["merge_prob"]}, cfg, {},
                               now=NOW)
     assert "merge_prob" in scored["parts"]
+
+
+def test_render_hides_cached_merge_prob_when_setting_is_off(cfg, tmp_path):
+    from scout import render, state as statemod
+    st = statemod.load(tmp_path)
+    st["repos"]["o/r"] = {"repo": "o/r", "friendliness": 0.7, "merge_prob": 0.65}
+    cfg.settings["use_merge_model"] = False
+    off = render.build_payload(cfg, tmp_path, st, now=NOW)
+    assert "merge_prob" not in off["projects"]["repos"][0]
+    cfg.settings["use_merge_model"] = True
+    on = render.build_payload(cfg, tmp_path, st, now=NOW)
+    assert on["projects"]["repos"][0]["merge_prob"] == 0.65
+
+
+def test_project_score_falls_back_with_thin_rows_and_skips_bad_timestamps():
+    model = fixture_model()
+    info = {"stars": 5000, "language": "C++", "owner_type": "Organization", "ai_policy": "none", "cla": False,
+            "policy_files": ["CONTRIBUTING.md"], "merge_rate": 0.9, "median_days_to_merge": 2.0,
+            "outside_prs_sampled": 40}
+    no_rows = mergemodel.project_score(model, "o/r", info, [], now=NOW)
+    two_rows = [
+        {**FIXTURE["rows"][0], "repo": "o/r", "state_at_cut": "closed", "merged": False, "closed_at": iso(5)},
+        {**FIXTURE["rows"][1], "repo": "o/r", "state_at_cut": "closed", "merged": False, "closed_at": "not-a-date"},
+    ]
+    with_two = mergemodel.project_score(model, "o/r", info, two_rows, now=NOW)
+    assert with_two == pytest.approx(no_rows, abs=1e-9)
+
+
+def test_prdata_sanitizes_labels_preserves_opening_fields_and_score_survives_write_error(tmp_path, monkeypatch):
+    # Static label sanitization blocks @ and http
+    bad_meta = {"stars": 500, "language": "user@example.com", "owner_type": "https://evil.example",
+                "ai_policy": "none", "cla": False, "policy_files": []}
+    out = prdata.static_features(bad_meta)
+    assert out["language"] is None and out["owner_type"] is None and out["ai_policy"] == "none"
+
+    # Incremental update preserves first-seen opening fields when PR closes
+    p = tmp_path / prdata.FILE
+    open_row = make_rows()[0]
+    open_row.update(state_at_cut="open", closed_at=None, merged=False, title_len=12, body_len=50,
+                    draft=True, author_assoc="NONE")
+    prdata.merge(p, [open_row])
+    closed_row = {**open_row, "state_at_cut": "closed", "closed_at": iso(1), "merged": True,
+                  "title_len": 99, "body_len": 999, "draft": False, "author_assoc": "CONTRIBUTOR"}
+    prdata.merge(p, [closed_row])
+    saved = prdata.read(p)[0]
+    assert saved["merged"] is True and saved["state_at_cut"] == "closed"
+    assert saved["title_len"] == 12 and saved["body_len"] == 50 and saved["draft"] is True and saved["author_assoc"] == "NONE"
+
+    # measure() survives prdata.merge errors
+    monkeypatch.setattr(prdata, "merge", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(policy, "fetch", lambda gh, repo: {"ai": "none", "evidence": "", "cla": False, "files": []})
+    routes = {"repos/o/r": {"pushed_at": iso(1), "stars": 100}, "repos/o/r/pulls": []}
+    res = score.measure(GitHub(transport=Fake(routes)), "o/r", now=NOW, data_dir=tmp_path)
+    assert res["repo"] == "o/r"
+
+
+def test_builder_excludes_stale_open_snapshots():
+    build = load_script("build_merge_dataset")
+    cut = NOW
+    stale_open = {**make_rows()[0], "number": 1, "created_at": iso(120), "closed_at": None, "merged": False,
+                  "state_at_cut": "open", "collected_at": iso(110)}
+    confirmed_open = {**make_rows()[0], "number": 2, "created_at": iso(120), "closed_at": None, "merged": False,
+                      "state_at_cut": "open", "collected_at": iso(5)}
+    ds, meta = build.build([stale_open, confirmed_open], state={"repos": {}}, cut=cut, horizon_days=90)
+    assert [r["number"] for r in ds] == [2]
+    assert ds[0]["y"] == 0 and meta["rows_stale_open"] == 1
+
+
+def test_trainer_handles_sparse_and_single_project_datasets():
+    pytest.importorskip("sklearn")
+    train = load_script("train_merge_model")
+    single_class = [{**r, "y": 1, "created_at": iso(200 - i)} for i, r in enumerate(FIXTURE["rows"][:15])]
+    res = train.run(single_class, {"cut": iso(0), "horizon_days": 90}, now=NOW)
+    assert res["beats_baseline"] is False and res["decision_reasons"]
+
+    one_project = [{**r, "repo": "o/only", "y": i % 2, "created_at": iso(200 - i)}
+                   for i, r in enumerate(FIXTURE["rows"][:20])]
+    res2 = train.run(one_project, {"cut": iso(0), "horizon_days": 90}, now=NOW)
+    assert res2["beats_baseline"] is False and res2["metrics"]["lopo"]["model_auc"] is None
 
 
 def test_dashboard_shows_merge_chance_only_when_present():

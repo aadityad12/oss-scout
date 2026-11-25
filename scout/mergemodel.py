@@ -57,7 +57,12 @@ def _num(v, default: float = 0.0) -> float:
 
 
 def _present(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(v))
+    except OverflowError:
+        return False
 
 
 def numeric_value(name: str, row: dict, imputations: dict) -> float:
@@ -136,34 +141,44 @@ def predict_proba(model: dict, feature_row: dict) -> float:
 
 
 def _valid(model) -> bool:
-    if not isinstance(model, dict) or any(k not in model for k in REQUIRED):
-        return False
-    numeric, cats = model["numeric"], model["categories"]
-    if not isinstance(numeric, list) or any(n not in NUMERIC for n in numeric):
-        return False
-    if not isinstance(cats, dict) or any(c not in CATEGORICAL or not isinstance(v, list) or not v
-                                         or not all(isinstance(lvl, str) for lvl in v) for c, v in cats.items()):
-        return False
-    if model["features"] != feature_names(numeric, cats):
-        return False
-    w = model["weights"]
-    if not isinstance(w, list) or len(w) != len(model["features"]) or not all(_present(v) for v in w):
-        return False
-    if not _present(model["intercept"]):
-        return False
-    for n in numeric:
-        if not _present((model["means"] or {}).get(n)) or not _present((model["scales"] or {}).get(n)):
+    try:
+        if not isinstance(model, dict) or any(k not in model for k in REQUIRED):
             return False
-        if model["scales"][n] <= 0:
+        if not isinstance(model["trained_at"], str):
             return False
-    if not isinstance(model["imputations"], dict) or not isinstance(model["project_defaults"], dict):
+        numeric, cats = model["numeric"], model["categories"]
+        if not isinstance(numeric, list) or any(n not in NUMERIC for n in numeric):
+            return False
+        if not isinstance(cats, dict) or any(c not in CATEGORICAL or not isinstance(v, list) or not v
+                                             or not all(isinstance(lvl, str) for lvl in v) for c, v in cats.items()):
+            return False
+        if model["features"] != feature_names(numeric, cats):
+            return False
+        w = model["weights"]
+        if not isinstance(w, list) or len(w) != len(model["features"]) or not all(_present(v) for v in w):
+            return False
+        if not _present(model["intercept"]):
+            return False
+        means, scales = model["means"], model["scales"]
+        if not isinstance(means, dict) or not isinstance(scales, dict):
+            return False
+        for n in numeric:
+            if not _present(means.get(n)) or not _present(scales.get(n)):
+                return False
+            if float(scales[n]) <= 0:
+                return False
+        if not isinstance(model["imputations"], dict) or not isinstance(model["project_defaults"], dict):
+            return False
+        return True
+    except (TypeError, ValueError, OverflowError):
         return False
-    return True
 
 
 def load(path: Path, now: datetime | None = None, max_age_days: float = 90) -> dict | None:
     """The model in `path`, or None if it is missing, unreadable, incomplete, older than
     `max_age_days`, or did not beat the baselines."""
+    if not _present(max_age_days) or float(max_age_days) < 0:
+        return None
     try:
         model = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -180,7 +195,7 @@ def load(path: Path, now: datetime | None = None, max_age_days: float = 90) -> d
         trained = trained.replace(tzinfo=timezone.utc)
     now = now or datetime.now(timezone.utc)
     age = (now - trained).total_seconds() / 86400
-    if age > max_age_days or age < -1:
+    if age > float(max_age_days) or age < -1:
         return None
     return model
 
@@ -233,16 +248,21 @@ def project_score(model: dict, repo: str, repo_info: dict, pr_rows: list[dict] |
     row = _typical(rows, model.get("project_defaults") or {})
     hist = []
     for r in rows:
-        created, closed = parse_ts(r.get("created_at")), parse_ts(r.get("closed_at"))
+        try:
+            created, closed = parse_ts(r.get("created_at")), parse_ts(r.get("closed_at"))
+        except (AttributeError, TypeError, ValueError):
+            continue
         if r.get("state_at_cut") == "closed" and created and closed:
             hist.append((created, closed, r.get("merged") is True))
-    if hist:
-        n, rate, med = prior_stats(hist, now)
-    else:
-        n = int(_num(repo_info.get("outside_prs_sampled")))
-        rate, med = repo_info.get("merge_rate"), repo_info.get("median_days_to_merge")
+    n, rate, med = prior_stats(hist, now) if hist else (0, None, None)
     if n < THIN:
-        rate = med = None
+        # Avoid dropping a full state.json measurement when only 1-4 closed rows have accumulated yet.
+        sampled = int(_num(repo_info.get("outside_prs_sampled")))
+        if sampled >= THIN:
+            n = sampled
+            rate, med = repo_info.get("merge_rate"), repo_info.get("median_days_to_merge")
+        else:
+            rate = med = None
     row.update(repo_prior_n=n, repo_prior_merge_rate=rate if _present(rate) else None,
                repo_prior_median_days_to_merge=med if _present(med) else None,
                **static_features(repo_info))

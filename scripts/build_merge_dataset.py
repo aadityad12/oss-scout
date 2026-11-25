@@ -64,7 +64,8 @@ def build(rows: list[dict], state: dict | None = None, cut: datetime | None = No
     by_repo: dict[str, list[dict]] = {}
     for r in kept:
         by_repo.setdefault(r["repo"], []).append(r)
-    out, too_recent = [], 0
+    out, too_recent, stale_open = [], 0, 0
+    horizon = timedelta(days=horizon_days)
     for repo, rs in by_repo.items():
         hist = []
         for r in rs:
@@ -77,13 +78,18 @@ def build(rows: list[dict], state: dict | None = None, cut: datetime | None = No
             if created > limit:
                 too_recent += 1
                 continue
+            closed = parse_ts(r.get("closed_at"))
+            if r.get("state_at_cut") == "open" and closed is None:
+                collected = parse_ts(r.get("collected_at"))
+                if collected is None or collected < created + horizon:
+                    stale_open += 1
+                    continue
             n, rate, med = prdata.prior_stats(hist, created)
             if n < THIN:
                 rate = med = None
             row = {k: v for k, v in r.items() if k in prdata.FIELDS and k not in DROP}
             row.update(repo_prior_n=n, repo_prior_merge_rate=rate, repo_prior_median_days_to_merge=med,
                        y=label(r, horizon_days))
-            closed = parse_ts(r.get("closed_at"))
             if closed and closed > cut:  # outcome after the cut is unknown at the cut
                 row["y"] = 0
             out.append(row)
@@ -97,7 +103,8 @@ def build(rows: list[dict], state: dict | None = None, cut: datetime | None = No
         p["n"] += 1
         p["pos"] += r["y"]
     meta = {"cut": iso(cut), "horizon_days": horizon_days, "rows_in_file": len(rows),
-            "rows_outside_eligible": len(kept), "rows_too_recent": too_recent, "n": len(out),
+            "rows_outside_eligible": len(kept), "rows_too_recent": too_recent,
+            "rows_stale_open": stale_open, "n": len(out),
             "pos": sum(r["y"] for r in out), "projects": len(ranges),
             "excluded_projects": sorted(skip & {r.get("repo") for r in rows}),
             "per_project": dict(sorted(ranges.items()))}
@@ -108,11 +115,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--rows", required=True, type=Path, help="pr_outcomes.jsonl")
     ap.add_argument("--state", type=Path, help="state.json, to leave out archived and merges_elsewhere projects")
+    ap.add_argument("--allow-no-state", action="store_true",
+                    help="allow building without --state (skips archived/merges_elsewhere exclusions)")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--meta", type=Path, help="metadata JSON (default: next to --out)")
     ap.add_argument("--cut", help="ISO time; default: the newest collected_at in --rows")
     ap.add_argument("--horizon-days", type=float, default=90)
     args = ap.parse_args()
+    if args.state is None and not args.allow_no_state:
+        ap.error("--state is required so archived and merges_elsewhere projects are excluded (or pass --allow-no-state)")
 
     state = json.loads(args.state.read_text()) if args.state else None
     cut = parse_ts(args.cut) if args.cut else None
@@ -123,7 +134,8 @@ def main() -> None:
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     print(f"cut {meta['cut']}, horizon {meta['horizon_days']:g} days")
     print(f"{meta['rows_in_file']} rows in file, {meta['rows_outside_eligible']} outside rows in eligible projects, "
-          f"{meta['rows_too_recent']} too recent, {meta['n']} in the dataset ({meta['pos']} merged in time) "
+          f"{meta['rows_too_recent']} too recent, {meta['rows_stale_open']} stale open, "
+          f"{meta['n']} in the dataset ({meta['pos']} merged in time) "
           f"from {meta['projects']} projects")
     print(f"{'project':45} {'first opened':12} {'last opened':12} {'rows':>5} {'merged':>6}")
     for repo, p in meta["per_project"].items():

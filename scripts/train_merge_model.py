@@ -41,11 +41,12 @@ MIN_LEVEL = 30  # a language / policy / owner type needs this many fit rows to g
 N_RESAMPLES, SEED = 2000, 42
 THIN = mergemodel.THIN
 BASELINES = {
-    "B0": "constant: the merge rate of the rows the model was fit on",
-    "B1": "the project's own merge rate in the rows the model was fit on (the fit rate when it has fewer than 5)",
-    "B1_prior": "the project's merge rate over its PRs closed before this one was opened (the fit rate when fewer than 5)",
+    "B0": "constant: the merge rate of the training split",
+    "B1": "the project's own merge rate in the training split (the training rate when it has fewer than 5)",
+    "B1_prior": "the project's raw historical merge rate over its PRs closed before this one was opened "
+                "(the training rate when fewer than 5; uses any-time merges, while the label y is 90-day merges)",
     "B2": "the merge-record part of the scout's friendliness: (0.45 * merge rate + 0.25 * speed) / 0.70 "
-          "from the PRs closed before this one was opened (0.5 when fewer than 5)",
+          "from the PRs closed before this one was opened (0.5 when fewer than 5; uses any-time merges)",
 }
 
 
@@ -158,7 +159,7 @@ def _auc(y, s):
         return None
 
 
-def evaluate(y: list[int], scores: dict[str, list[float]], best: str | None = None) -> dict:
+def evaluate(y: list[int], scores: dict[str, list[float]]) -> dict:
     out = {}
     for name, s in scores.items():
         auc = _auc(y, s)
@@ -167,16 +168,40 @@ def evaluate(y: list[int], scores: dict[str, list[float]], best: str | None = No
     return out
 
 
-def lopo(rows: list[dict], C: float) -> dict:
-    """Fit on every other project, predict the held-out one; AUC over all predictions pooled."""
+def _choose_c(train_rows: list[dict], val_rows: list[dict]) -> tuple[float, list[dict]]:
+    """Select C on `val_rows` from models fit on `train_rows` only."""
+    spec_tr = spec_from(train_rows)
+    yv = [r["y"] for r in val_rows]
+    tuning = []
+    for C in C_GRID:
+        m = as_model(spec_tr, fit(spec_tr, train_rows, C))
+        pv = predict(m, val_rows)
+        tuning.append({"C": C, "val_auc": _auc(yv, pv), "val_brier": metrics.brier_score(yv, pv)})
+    if any(t["val_auc"] is not None for t in tuning):
+        best_c = max(tuning, key=lambda t: (t["val_auc"] if t["val_auc"] is not None else -1.0, -t["C"]))["C"]
+    else:
+        best_c = min(tuning, key=lambda t: (t["val_brier"], t["C"]))["C"]
+    return best_c, tuning
+
+
+def lopo(rows: list[dict], default_c: float = 0.01) -> dict:
+    """Fit on every other project (choosing C inside each fold without seeing the held-out project),
+    predict the held-out one, and compute AUC over all pooled predictions."""
     y, model_s, base_s, per_project = [], [], {k: [] for k in BASELINES}, {}
     for project in sorted({r["repo"] for r in rows}):
         held = [r for r in rows if r["repo"] == project]
         rest = [r for r in rows if r["repo"] != project]
         if len({r["y"] for r in rest}) < 2:
             continue
+        rest_sorted = sorted(rest, key=order_key)
+        split = _boundary(rest_sorted, round(len(rest_sorted) * 0.75))
+        inner_tr, inner_val = rest_sorted[:split], rest_sorted[split:]
+        if inner_tr and inner_val and len({r["y"] for r in inner_tr}) >= 2:
+            fold_c, _ = _choose_c(inner_tr, inner_val)
+        else:
+            fold_c = default_c
         spec = spec_from(rest)
-        m = as_model(spec, fit(spec, rest, C))
+        m = as_model(spec, fit(spec, rest, fold_c))
         p = predict(m, held)
         b = baseline_scores(rest, held)
         y += [r["y"] for r in held]
@@ -184,10 +209,12 @@ def lopo(rows: list[dict], C: float) -> dict:
         for k in BASELINES:
             base_s[k] += b[k]
         hy = [r["y"] for r in held]
-        per_project[project] = {"n": len(held), "pos": sum(hy), "model_auc": _auc(hy, p),
+        per_project[project] = {"n": len(held), "pos": sum(hy), "C": fold_c, "model_auc": _auc(hy, p),
                                 **{f"{k}_auc": _auc(hy, b[k]) for k in BASELINES}}
-    out = {"n": len(y), "pos": sum(y), "model_auc": _auc(y, model_s), "model_brier": metrics.brier_score(y, model_s),
-           **{f"{k}_auc": _auc(y, base_s[k]) for k in BASELINES}}
+    out = {"n": len(y), "pos": sum(y),
+           "model_auc": _auc(y, model_s) if y else None,
+           "model_brier": metrics.brier_score(y, model_s) if y else None,
+           **{f"{k}_auc": (_auc(y, base_s[k]) if y else None) for k in BASELINES}}
     with_both = [v for v in per_project.values() if v["model_auc"] is not None]
     out["projects"] = len(per_project)
     out["projects_with_both_outcomes"] = len(with_both)
@@ -200,7 +227,7 @@ def lopo(rows: list[dict], C: float) -> dict:
 
 
 def decide(n_test: int, pos_test: int, model_auc: float | None, best_auc: float | None,
-           diff_ci_low: float | None, model_brier: float, best_brier: float,
+           diff_ci_low: float | None, model_brier: float | None, best_brier: float | None,
            lopo_auc: float | None, best_lopo_auc: float | None) -> tuple[bool, list[str]]:
     """True only if every rule holds; the reasons list each check and whether it passed."""
     checks = [
@@ -210,7 +237,8 @@ def decide(n_test: int, pos_test: int, model_auc: float | None, best_auc: float 
          f"test AUC {_f(model_auc)} >= best baseline {_f(best_auc)} + 0.03"),
         (diff_ci_low is not None and diff_ci_low > 0,
          f"95% bootstrap lower bound of (model - best baseline) AUC {_f(diff_ci_low)} > 0"),
-        (model_brier <= best_brier, f"test Brier {_f(model_brier)} <= best baseline Brier {_f(best_brier)}"),
+        (model_brier is not None and best_brier is not None and model_brier <= best_brier,
+         f"test Brier {_f(model_brier)} <= best baseline Brier {_f(best_brier)}"),
         (lopo_auc is not None and best_lopo_auc is not None and lopo_auc > best_lopo_auc,
          f"leave-one-project-out AUC {_f(lopo_auc)} > best baseline {_f(best_lopo_auc)}"),
     ]
@@ -226,23 +254,54 @@ def _f(v, digits: int = 3) -> str:
 def run(rows: list[dict], meta: dict, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     train, val, test = time_split(rows)
-    if not train or not val or not test:
-        raise SystemExit("too few rows to split")
 
-    spec_tr = spec_from(train)
+    def span(rs):
+        return {"n": len(rs), "pos": sum(r["y"] for r in rs),
+                "first_created": rs[0]["created_at"] if rs else "",
+                "last_created": rs[-1]["created_at"] if rs else ""}
+
     yv = [r["y"] for r in val]
-    tuning = []
-    for C in C_GRID:
-        m = as_model(spec_tr, fit(spec_tr, train, C))
-        tuning.append({"C": C, "val_auc": _auc(yv, predict(m, val)), "val_brier": metrics.brier_score(yv, predict(m, val))})
-    best_c = max(tuning, key=lambda t: (t["val_auc"] or 0, -t["C"]))["C"]
-
-    fit_rows = train + val
-    spec = spec_from(fit_rows)
-    model = as_model(spec, fit(spec, fit_rows, best_c))
     y = [r["y"] for r in test]
+    if not train or not val or not test or len({r["y"] for r in train}) < 2:
+        spec = spec_from(train or rows) if (train or rows) else {
+            "features": [], "numeric": [], "means": {}, "scales": {},
+            "categories": {}, "imputations": {}, "project_defaults": {},
+        }
+        reason = ("FAIL: training split needs both merged and unmerged rows"
+                  if train and val and test else "FAIL: too few rows to form train, validation and test splits")
+        empty_m = {"auc": None, "auc_ci": None, "brier": None}
+        return {
+            "version": VERSION,
+            "trained_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "data_cut": meta.get("cut"),
+            "horizon_days": meta.get("horizon_days", 90),
+            "n_train": len(train), "n_val": len(val), "n_test": len(test),
+            "pos_train": sum(r["y"] for r in train), "pos_val": sum(yv), "pos_test": sum(y),
+            "splits": {"train": span(train), "val": span(val), "test": span(test)},
+            "fit_rows": "train only (60% split; C chosen on val)",
+            "C": C_GRID[0], "tuning": [],
+            **{k: spec[k] for k in ("features", "numeric", "means", "scales", "categories", "imputations",
+                                    "project_defaults")},
+            "weights": [0.0] * len(spec["features"]), "intercept": 0.0,
+            "metrics": {"test": {"model": empty_m, "diff_vs_best_baseline_ci": None,
+                                 "best_baseline": "B0", "best_brier_baseline": "B0", "ece": None},
+                        "lopo": {"n": 0, "pos": 0, "model_auc": None, "model_brier": None,
+                                 "projects": 0, "projects_with_both_outcomes": 0,
+                                 **{f"{k}_auc": None for k in BASELINES}}},
+            "baselines": {k: {"description": BASELINES[k], **empty_m} for k in BASELINES},
+            "calibration": [],
+            "per_project_ranges": meta.get("per_project", {}),
+            "dataset": {k: meta.get(k) for k in ("rows_in_file", "rows_outside_eligible", "rows_too_recent",
+                                                 "rows_stale_open", "n", "pos", "projects")},
+            "beats_baseline": False,
+            "decision_reasons": [reason],
+        }
+
+    best_c, tuning = _choose_c(train, val)
+    spec = spec_from(train)
+    model = as_model(spec, fit(spec, train, best_c))
     p = predict(model, test)
-    base = baseline_scores(fit_rows, test)
+    base = baseline_scores(train, test)
     res = evaluate(y, {"model": p, **base})
     base_aucs = {k: res[k]["auc"] for k in BASELINES if res[k]["auc"] is not None}
     best = max(base_aucs, key=base_aucs.get) if base_aucs else "B0"
@@ -251,16 +310,12 @@ def run(rows: list[dict], meta: dict, now: datetime | None = None) -> dict:
     best_brier_name = min(BASELINES, key=lambda k: res[k]["brier"])
     table = metrics.calibration_table(y, p, 10)
     ece = metrics.expected_calibration_error(table)
-    lo = lopo(rows, best_c)
+    lo = lopo(rows, default_c=best_c)
     lopo_base = {k: lo[f"{k}_auc"] for k in BASELINES if lo[f"{k}_auc"] is not None}
     best_lopo = max(lopo_base.values()) if lopo_base else None
     ok, reasons = decide(len(test), sum(y), res["model"]["auc"], res[best]["auc"],
                          diff_ci[0] if diff_ci else None, res["model"]["brier"], res[best_brier_name]["brier"],
                          lo["model_auc"], best_lopo)
-
-    def span(rs):
-        return {"n": len(rs), "pos": sum(r["y"] for r in rs), "first_created": rs[0]["created_at"],
-                "last_created": rs[-1]["created_at"]}
 
     out = {
         "version": VERSION,
@@ -270,7 +325,7 @@ def run(rows: list[dict], meta: dict, now: datetime | None = None) -> dict:
         "n_train": len(train), "n_val": len(val), "n_test": len(test),
         "pos_train": sum(r["y"] for r in train), "pos_val": sum(yv), "pos_test": sum(y),
         "splits": {"train": span(train), "val": span(val), "test": span(test)},
-        "fit_rows": "train + val (refit after choosing C on val)",
+        "fit_rows": "train only (60% split; C chosen on val)",
         "C": best_c, "tuning": tuning,
         **{k: spec[k] for k in ("features", "numeric", "means", "scales", "categories", "imputations",
                                 "project_defaults")},
@@ -281,8 +336,8 @@ def run(rows: list[dict], meta: dict, now: datetime | None = None) -> dict:
         "baselines": {k: {"description": BASELINES[k], **res[k]} for k in BASELINES},
         "calibration": table,
         "per_project_ranges": meta.get("per_project", {}),
-        "dataset": {k: meta.get(k) for k in ("rows_in_file", "rows_outside_eligible", "rows_too_recent", "n", "pos",
-                                             "projects")},
+        "dataset": {k: meta.get(k) for k in ("rows_in_file", "rows_outside_eligible", "rows_too_recent",
+                                             "rows_stale_open", "n", "pos", "projects")},
         "beats_baseline": ok,
         "decision_reasons": reasons,
     }
@@ -306,10 +361,10 @@ FEATURES_DOC = [
 # stored in pr_outcomes.jsonl but kept out of the model, and why
 NOT_INPUTS = [
     ("`author_assoc`", "GitHub reports the association as it is now. A first-timer whose PR was merged is a "
-     "CONTRIBUTOR afterwards, so the field partly records the outcome. In the first run on real data, CONTRIBUTOR "
-     "rows were merged about 55% of the time and NONE rows about 11%, and the model leaned on it hard."),
+     "CONTRIBUTOR afterwards, so the field partly records the outcome (in the initial exploratory run on real data, "
+     "CONTRIBUTOR rows were merged about 55% of the time vs 11% for NONE)."),
     ("`draft`", "The current draft state. A PR has to leave draft before it can be merged, so a merged PR is never a "
-     "draft: 1 of 221 draft rows in that first run was merged."),
+     "draft (1 of 221 draft rows in the initial exploratory run was merged)."),
     ("`title_wip_marker`", "The current title. WIP markers are taken out before merging, the same problem as `draft`."),
     ("`from_fork`", "Always true for an outside PR, so it carries no information."),
 ]
@@ -398,8 +453,12 @@ def write_doc(m: dict, path: Path, public: set[str]) -> None:
       "(`prdata.complete_since`). For busy projects that point is days or weeks back, so they contribute no rows "
       "until the nightly runs have collected 90 days and more; quiet projects reach years back. The dataset leans "
       "toward quieter projects for now.")
-    w("- PRs that left the 100-newest-open window keep the last row seen; one merged later shows up again in the "
-      "closed list and is updated, but an old open PR that never comes back counts as 0.")
+    w("- PRs that left the 100-newest-open window keep the last row seen; if an open PR's last `collected_at` is "
+      f"earlier than {m['horizon_days']:g} days after it was opened, its horizon outcome is unknown and the dataset "
+      "builder excludes it instead of labelling it 0.")
+    w("- Optional PR size features (`additions`, `deletions`, `changed_files`) are not collected yet because they "
+      "require one extra API request per pull request; rows without size are valid and the pipeline can add them later "
+      "under a per-run budget.")
     w("- **Outside contributor** uses the scout's `is_outside` heuristic: from a fork, not a bot, author association "
       "NONE / FIRST_TIMER / FIRST_TIME_CONTRIBUTOR, or CONTRIBUTOR with fewer than 3 PRs in the sample. Staff with "
       "private org membership who work from forks and open few PRs still slip in; prolific outsiders are dropped. "
@@ -408,8 +467,9 @@ def write_doc(m: dict, path: Path, public: set[str]) -> None:
       "the ones the scout watches (large, company-backed, mostly C, C++ and Python), not GitHub at large.")
     w("")
     ds = m["dataset"]
+    stale_note = f", {ds['rows_stale_open']} stale open excluded" if ds.get("rows_stale_open") else ""
     w(f"{ds['rows_in_file']} rows in the file, {ds['rows_outside_eligible']} outside rows in eligible projects, "
-      f"{ds['rows_too_recent']} left out as too recent, **{ds['n']} in the dataset ({ds['pos']} merged in time) from "
+      f"{ds['rows_too_recent']} left out as too recent{stale_note}, **{ds['n']} in the dataset ({ds['pos']} merged in time) from "
       f"{ds['projects']} projects**.")
     w("")
     w("### Per-project date ranges")
@@ -435,7 +495,10 @@ def write_doc(m: dict, path: Path, public: set[str]) -> None:
         w(f"| {name} | {s['n']} | {s['pos']} | {s['first_created'][:10]} | {s['last_created'][:10]} |")
     w("")
     w(f"C (inverse L2 strength) was chosen on validation AUC from {', '.join(f'{c:g}' for c in C_GRID)}: "
-      f"**C = {m['C']:g}**. The model was then refit on train + validation and scored on test once.")
+      f"**C = {m['C']:g}**. The test model and baselines B0/B1 are fit on the training split (60%) and scored on test "
+      "once; each leave-one-project-out fold chooses C on an inner time split of the other projects so no held-out "
+      "project influences tuning. Gradient boosting was not pursued because logistic regression did not leave clear "
+      "headroom over the baselines on this sample size.")
     w("")
     w("## Baselines")
     w("")
@@ -444,7 +507,9 @@ def write_doc(m: dict, path: Path, public: set[str]) -> None:
     for k, v in m["baselines"].items():
         w(f"- **{k}**: {v['description']}.")
     w("")
-    w("B2 leaves out friendliness's first-reply (0.20) and activity (0.10) parts: neither can be rebuilt as of the "
+    w(f"Note that `B1_prior` and `B2` use raw historical merge rates over PRs closed before the target PR opened "
+      f"(any-time merges), while the target label `y` counts merges within {m['horizon_days']:g} days. "
+      "B2 leaves out friendliness's first-reply (0.20) and activity (0.10) parts: neither can be rebuilt as of the "
       "day an old PR was opened without new API calls, so the weights are renormalized over the 0.70 that remains.")
     w("")
     w("## Results")
@@ -527,8 +592,8 @@ def write_doc(m: dict, path: Path, public: set[str]) -> None:
     w("python3 scripts/before_after_merge_model.py --data <copy of the data>")
     w("```")
     w("")
-    w(f"A model file older than `merge_model_max_age_days` ({90} by default) is ignored, so retrain at least that often "
-      "if it is switched on.")
+    w("A model file older than `merge_model_max_age_days` (default 90 in `targets.toml`) is ignored, so retrain at least "
+      "that often if it is switched on.")
     w("")
     path.write_text("\n".join(L))
 

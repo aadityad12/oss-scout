@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import statistics
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,15 +75,29 @@ def has_contributing(policy_files) -> bool:
     return any("contributing" in str(f).lower() for f in policy_files or [])
 
 
+# Fields captured when a PR is first seen; preserved on later updates so review-time edits
+# do not overwrite opening-time observations on incremental nightly runs.
+OPENING_FIELDS = ("author_assoc", "draft", "title_len", "body_len", "body_has_issue_ref", "title_wip_marker")
+
+
+def _safe_label(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s or "@" in s or "http" in s.lower() or any(ord(ch) < 32 for ch in s):
+        return None
+    return s
+
+
 def static_features(meta: dict | None) -> dict:
     """The project-level fields, from a `measure()` result or the same keys in state.json."""
     meta = meta or {}
     stars = meta.get("stars")
     return {
-        "stars_log10": round(math.log10(stars + 1), 4) if isinstance(stars, (int, float)) and stars >= 0 else None,
-        "language": meta.get("language") if isinstance(meta.get("language"), str) else None,
-        "owner_type": meta.get("owner_type") if isinstance(meta.get("owner_type"), str) else None,
-        "ai_policy": meta.get("ai_policy") if isinstance(meta.get("ai_policy"), str) else None,
+        "stars_log10": round(math.log10(stars + 1), 4) if isinstance(stars, (int, float)) and not isinstance(stars, bool) and stars >= 0 else None,
+        "language": _safe_label(meta.get("language")),
+        "owner_type": _safe_label(meta.get("owner_type")),
+        "ai_policy": _safe_label(meta.get("ai_policy")),
         "cla": bool(meta.get("cla")),
         "has_contributing": has_contributing(meta.get("policy_files")),
     }
@@ -196,10 +212,11 @@ def read(path: Path) -> list[dict]:
 
 
 def merge(path: Path, new_rows: list[dict], add_since: datetime | None = None) -> int:
-    """Merge rows into the file by `repo#number` (new rows win) and rewrite it atomically.
+    """Merge rows into the file by `repo#number` and rewrite it atomically.
 
     With `add_since` (see `complete_since`), a PR not yet in the file is added only if it was opened
-    after that time; PRs already in the file are always updated. Returns the number of rows."""
+    after that time; PRs already in the file are always updated (preserving first-observed opening
+    fields when a PR transitions from open to closed). Returns the number of rows."""
     merged = {key(r): {f: r.get(f) for f in FIELDS} for r in read(path)}
     for r in new_rows:
         k = key(r)
@@ -207,10 +224,27 @@ def merge(path: Path, new_rows: list[dict], add_since: datetime | None = None) -
             created = parse_ts(r.get("created_at"))
             if created is None or created <= add_since:
                 continue
-        merged[k] = {f: r.get(f) for f in FIELDS}
+        clean = {f: r.get(f) for f in FIELDS}
+        for field in ("language", "owner_type", "ai_policy"):
+            clean[field] = _safe_label(clean[field])
+        prev = merged.get(k)
+        if prev is not None and prev.get("state_at_cut") == "open":
+            for field in OPENING_FIELDS:
+                if prev.get(field) is not None:
+                    clean[field] = prev[field]
+        merged[k] = clean
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(merged[k], sort_keys=False) + "\n" for k in sorted(merged)),
-                   encoding="utf-8")
-    tmp.replace(path)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for k in sorted(merged):
+                f.write(json.dumps(merged[k], sort_keys=False) + "\n")
+        tmp.replace(path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return len(merged)

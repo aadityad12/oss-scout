@@ -58,7 +58,7 @@ def main() -> None:
     for c in cands:
         repo = {**(c.get("repo_info") or {}), **st["repos"].get(c["repo"], {})}
         repo.pop("merge_prob", None)
-        p = mergemodel.project_score(model, c["repo"], repo, rows.get(c["repo"]))
+        p = mergemodel.project_score(model, c["repo"], repo, rows.get(c["repo"]), now=now)
         before = rank.score_issue(c, repo, off_cfg, st, now=now)
         after = rank.score_issue(c, repo, on_cfg, st, now=now, merge_prob=p)
         scored.append({"key": c["key"], "before": before["score"], "after": after["score"],

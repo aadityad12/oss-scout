@@ -191,9 +191,13 @@ def measure(gh: GitHub, repo: str, now: datetime | None = None, data_dir: Path |
     }
     if data_dir is not None:
         from . import prdata
-        prdata.merge(Path(data_dir) / prdata.FILE,
-                     prdata.rows(repo, all_closed, all_open, counts, now, repo_meta=result),
-                     add_since=prdata.complete_since(all_closed, all_open, CLOSED_SAMPLE))
+        try:
+            prdata.merge(Path(data_dir) / prdata.FILE,
+                         prdata.rows(repo, all_closed, all_open, counts, now, repo_meta=result),
+                         add_since=prdata.complete_since(all_closed, all_open, CLOSED_SAMPLE))
+        except Exception as e:
+            import sys
+            print(f"[scout] warning: could not record PR outcomes for {repo}: {e}", file=sys.stderr, flush=True)
     return result
 
 

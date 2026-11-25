@@ -29,8 +29,8 @@ Numbers are standardized with the fit rows' mean and standard deviation. Stored 
 
 | Field | Why it is left out |
 | --- | --- |
-| `author_assoc` | GitHub reports the association as it is now. A first-timer whose PR was merged is a CONTRIBUTOR afterwards, so the field partly records the outcome. In the first run on real data, CONTRIBUTOR rows were merged about 55% of the time and NONE rows about 11%, and the model leaned on it hard. |
-| `draft` | The current draft state. A PR has to leave draft before it can be merged, so a merged PR is never a draft: 1 of 221 draft rows in that first run was merged. |
+| `author_assoc` | GitHub reports the association as it is now. A first-timer whose PR was merged is a CONTRIBUTOR afterwards, so the field partly records the outcome (in the initial exploratory run on real data, CONTRIBUTOR rows were merged about 55% of the time vs 11% for NONE). |
+| `draft` | The current draft state. A PR has to leave draft before it can be merged, so a merged PR is never a draft (1 of 221 draft rows in the initial exploratory run was merged). |
 | `title_wip_marker` | The current title. WIP markers are taken out before merging, the same problem as `draft`. |
 | `from_fork` | Always true for an outside PR, so it carries no information. |
 
@@ -46,7 +46,8 @@ Numbers are standardized with the fit rows' mean and standard deviation. Stored 
 ## The sample and its biases
 
 - Rows come from what the nightly measurement already lists: each project's last 300 closed PRs **by update time** and its 100 newest open PRs. In a busy project an old PR is in that list only if something touched it lately, usually a late close, so old rows from busy projects would be mostly failures. To avoid that, a PR gets its first row only if it was opened after the point from which the lists hold every PR (`prdata.complete_since`). For busy projects that point is days or weeks back, so they contribute no rows until the nightly runs have collected 90 days and more; quiet projects reach years back. The dataset leans toward quieter projects for now.
-- PRs that left the 100-newest-open window keep the last row seen; one merged later shows up again in the closed list and is updated, but an old open PR that never comes back counts as 0.
+- PRs that left the 100-newest-open window keep the last row seen; if an open PR's last `collected_at` is earlier than 90 days after it was opened, its horizon outcome is unknown and the dataset builder excludes it instead of labelling it 0.
+- Optional PR size features (`additions`, `deletions`, `changed_files`) are not collected yet because they require one extra API request per pull request; rows without size are valid and the pipeline can add them later under a per-run budget.
 - **Outside contributor** uses the scout's `is_outside` heuristic: from a fork, not a bot, author association NONE / FIRST_TIMER / FIRST_TIME_CONTRIBUTOR, or CONTRIBUTOR with fewer than 3 PRs in the sample. Staff with private org membership who work from forks and open few PRs still slip in; prolific outsiders are dropped. The 3-PR count uses the whole sample, including PRs opened later.
 - Projects that merge outside GitHub (`merges_elsewhere`) and archived ones are excluded. The projects are the ones the scout watches (large, company-backed, mostly C, C++ and Python), not GitHub at large.
 
@@ -125,18 +126,18 @@ Rows are sorted by (created_at, repo, number). The oldest 60% train, the next 20
 | val | 334 | 113 | 2026-03-22 | 2026-06-30 |
 | test | 335 | 127 | 2026-06-30 | 2026-08-26 |
 
-C (inverse L2 strength) was chosen on validation AUC from 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1, 3: **C = 0.01**. The model was then refit on train + validation and scored on test once.
+C (inverse L2 strength) was chosen on validation AUC from 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1, 3: **C = 0.01**. The test model and baselines B0/B1 are fit on the training split (60%) and scored on test once; each leave-one-project-out fold chooses C on an inner time split of the other projects so no held-out project influences tuning. Gradient boosting was not pursued because logistic regression did not leave clear headroom over the baselines on this sample size.
 
 ## Baselines
 
 All scored on the same test rows and in the same leave-one-project-out folds.
 
-- **B0**: constant: the merge rate of the rows the model was fit on.
-- **B1**: the project's own merge rate in the rows the model was fit on (the fit rate when it has fewer than 5).
-- **B1_prior**: the project's merge rate over its PRs closed before this one was opened (the fit rate when fewer than 5).
-- **B2**: the merge-record part of the scout's friendliness: (0.45 * merge rate + 0.25 * speed) / 0.70 from the PRs closed before this one was opened (0.5 when fewer than 5).
+- **B0**: constant: the merge rate of the training split.
+- **B1**: the project's own merge rate in the training split (the training rate when it has fewer than 5).
+- **B1_prior**: the project's raw historical merge rate over its PRs closed before this one was opened (the training rate when fewer than 5; uses any-time merges, while the label y is 90-day merges).
+- **B2**: the merge-record part of the scout's friendliness: (0.45 * merge rate + 0.25 * speed) / 0.70 from the PRs closed before this one was opened (0.5 when fewer than 5; uses any-time merges).
 
-B2 leaves out friendliness's first-reply (0.20) and activity (0.10) parts: neither can be rebuilt as of the day an old PR was opened without new API calls, so the weights are renormalized over the 0.70 that remains.
+Note that `B1_prior` and `B2` use raw historical merge rates over PRs closed before the target PR opened (any-time merges), while the target label `y` counts merges within 90 days. B2 leaves out friendliness's first-reply (0.20) and activity (0.10) parts: neither can be rebuilt as of the day an old PR was opened without new API calls, so the weights are renormalized over the 0.70 that remains.
 
 ## Results
 
@@ -144,34 +145,34 @@ Test split: 335 rows, 127 merged in time. AUC intervals are 95% bootstrap interv
 
 | Scorer | Test AUC | 95% CI | Test Brier | Leave-one-project-out AUC |
 | --- | ---: | --- | ---: | ---: |
-| model | 0.639 | 0.577 to 0.701 | 0.223 | 0.692 |
-| B0 | 0.500 | 0.500 to 0.500 | 0.244 | 0.247 |
-| B1 | 0.639 | 0.578 to 0.698 | 0.229 | 0.247 |
-| B1_prior | 0.652 | 0.595 to 0.712 | 0.246 | 0.685 |
+| model | 0.636 | 0.574 to 0.697 | 0.227 | 0.680 |
+| B0 | 0.500 | 0.500 to 0.500 | 0.255 | 0.247 |
+| B1 | 0.584 | 0.527 to 0.640 | 0.255 | 0.247 |
+| B1_prior | 0.655 | 0.597 to 0.715 | 0.248 | 0.685 |
 | B2 | 0.645 | 0.588 to 0.704 | 0.269 | 0.697 |
 
-Best baseline on test AUC: **B1_prior**. Model minus B1_prior: -0.013 AUC, 95% CI -0.047 to 0.020. Lowest baseline Brier: B1.
+Best baseline on test AUC: **B1_prior**. Model minus B1_prior: -0.019 AUC, 95% CI -0.052 to 0.013. Lowest baseline Brier: B1_prior.
 
-Leave-one-project-out pooled 1673 predictions over 56 projects. Averaged per project (the 50 with both outcomes): model 0.466, B0 0.500, B1 0.500, B1_prior 0.450, B2 0.440.
+Leave-one-project-out pooled 1673 predictions over 56 projects. Averaged per project (the 50 with both outcomes): model 0.464, B0 0.500, B1 0.500, B1_prior 0.450, B2 0.440.
 
 B0 and B1 turn into one constant per held-out project (the other projects' rate), so their pooled AUC only says that projects with a low rate elsewhere do well here; read B1_prior and B2 for this check.
 
 ### Calibration (test split)
 
-Ten equal-count bins by predicted probability. Expected calibration error (row-weighted mean gap): **0.056**.
+Ten equal-count bins by predicted probability. Expected calibration error (row-weighted mean gap): **0.082**.
 
 | Bin | Rows | Mean predicted | Observed rate | Gap |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 34 | 0.185 | 0.176 | 0.009 |
-| 2 | 34 | 0.257 | 0.206 | 0.051 |
-| 3 | 34 | 0.311 | 0.294 | 0.017 |
-| 4 | 34 | 0.351 | 0.412 | 0.061 |
-| 5 | 34 | 0.385 | 0.412 | 0.027 |
-| 6 | 33 | 0.419 | 0.455 | 0.036 |
-| 7 | 33 | 0.455 | 0.303 | 0.152 |
-| 8 | 33 | 0.507 | 0.515 | 0.008 |
-| 9 | 33 | 0.583 | 0.394 | 0.189 |
-| 10 | 33 | 0.646 | 0.636 | 0.010 |
+| 1 | 34 | 0.231 | 0.147 | 0.084 |
+| 2 | 34 | 0.299 | 0.147 | 0.152 |
+| 3 | 34 | 0.355 | 0.441 | 0.086 |
+| 4 | 34 | 0.393 | 0.382 | 0.010 |
+| 5 | 34 | 0.429 | 0.412 | 0.018 |
+| 6 | 33 | 0.470 | 0.333 | 0.137 |
+| 7 | 33 | 0.499 | 0.455 | 0.044 |
+| 8 | 33 | 0.538 | 0.455 | 0.084 |
+| 9 | 33 | 0.593 | 0.394 | 0.199 |
+| 10 | 33 | 0.645 | 0.636 | 0.009 |
 
 ### Largest weights
 
@@ -179,28 +180,28 @@ Per standard deviation for numbers, per level for categories.
 
 | Input | Weight |
 | --- | ---: |
-| `repo_prior_merge_rate` | +0.579 |
-| `author_prior_prs` | +0.120 |
-| `ai_policy=none` | +0.116 |
-| `has_contributing` | -0.112 |
-| `hour_cos` | -0.111 |
-| `log_body_len` | -0.084 |
-| `log_repo_prior_median_days` | -0.083 |
-| `log_title_len` | +0.079 |
-| `body_has_issue_ref` | -0.078 |
-| `cla` | -0.076 |
-| `owner_type=Organization` | -0.073 |
-| `owner_type=User` | +0.073 |
+| `repo_prior_merge_rate` | +0.485 |
+| `author_prior_prs` | +0.189 |
+| `cla` | -0.097 |
+| `has_contributing` | -0.088 |
+| `hour_cos` | -0.086 |
+| `log_title_len` | +0.075 |
+| `log_repo_prior_median_days` | -0.073 |
+| `ai_policy=none` | +0.071 |
+| `owner_type=User` | +0.070 |
+| `owner_type=Organization` | -0.070 |
+| `body_has_issue_ref` | -0.059 |
+| `hour_sin` | -0.057 |
 
 ## Verdict
 
 The model is used only if all of these hold:
 
 - PASS: test rows 335 >= 150, merged 127 >= 30, not merged 208 >= 30
-- FAIL: test AUC 0.639 >= best baseline 0.652 + 0.03
-- FAIL: 95% bootstrap lower bound of (model - best baseline) AUC -0.047 > 0
-- PASS: test Brier 0.223 <= best baseline Brier 0.229
-- FAIL: leave-one-project-out AUC 0.692 > best baseline 0.697
+- FAIL: test AUC 0.636 >= best baseline 0.655 + 0.03
+- FAIL: 95% bootstrap lower bound of (model - best baseline) AUC -0.052 > 0
+- PASS: test Brier 0.227 <= best baseline Brier 0.248
+- FAIL: leave-one-project-out AUC 0.680 > best baseline 0.697
 
 At least one check fails, so `beats_baseline` is false and **the score is not used**: `scout/mergemodel.py` refuses to load the file, and `rank.score_issue` gives exactly the scores it gave before the model existed, whatever `use_merge_model` says. The data keeps accumulating every night; retrain when there is more of it.
 
@@ -226,4 +227,4 @@ python3 scripts/train_merge_model.py --dataset /tmp/merge_dataset.jsonl --meta /
 python3 scripts/before_after_merge_model.py --data <copy of the data>
 ```
 
-A model file older than `merge_model_max_age_days` (90 by default) is ignored, so retrain at least that often if it is switched on.
+A model file older than `merge_model_max_age_days` (default 90 in `targets.toml`) is ignored, so retrain at least that often if it is switched on.

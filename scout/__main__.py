@@ -78,9 +78,11 @@ def apply_merge_model(cfg, data: Path, repos: dict[str, dict], cached: dict[str,
         return 0
     rows = mergemodel.load_project_rows(data)
     n = 0
-    for name, r in repos.items():
-        if "friendliness" not in r:
+    scored_ids: set[int] = set()
+    for name, r in list(cached.items()) + list(repos.items()):
+        if not isinstance(r, dict) or id(r) in scored_ids or "friendliness" not in r:
             continue
+        scored_ids.add(id(r))
         p = mergemodel.project_score(model, name, r, rows.get(name))
         if p is not None:
             r["merge_prob"] = round(p, 3)
