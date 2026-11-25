@@ -216,7 +216,7 @@ def merge(path: Path, new_rows: list[dict], add_since: datetime | None = None) -
 
     With `add_since` (see `complete_since`), a PR not yet in the file is added only if it was opened
     after that time; PRs already in the file are always updated (preserving first-observed opening
-    fields when a PR transitions from open to closed). Returns the number of rows."""
+    fields across all subsequent updates). Returns the number of rows."""
     merged = {key(r): {f: r.get(f) for f in FIELDS} for r in read(path)}
     for r in new_rows:
         k = key(r)

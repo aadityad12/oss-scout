@@ -484,6 +484,12 @@ def test_load_accepts_a_fresh_passing_model(tmp_path):
     {"features": ["nope"]}, {"numeric": ["unknown_input"]},
     {"numeric": [], "categories": {}, "features": [], "weights": [], "means": {}, "scales": {}},
     {"scales": {}}, {"scales": "bad"}, {"scales": True}, {"means": [1]}, {"means": 123},
+    {"imputations": {**FIXTURE["model"]["imputations"], "repo_prior_merge_rate": "bad"}},
+    {"imputations": {"stars_log10": 3.0}},
+    {"project_defaults": {**FIXTURE["model"]["project_defaults"], "created_hour_utc": 10 ** 400}},
+    {"project_defaults": {**FIXTURE["model"]["project_defaults"], "created_hour_utc": 25}},
+    {"project_defaults": {**FIXTURE["model"]["project_defaults"], "created_weekday": 9}},
+    {"project_defaults": {**FIXTURE["model"]["project_defaults"], "body_has_issue_ref": "yes"}},
     {"categories": {"language": []}}, {"intercept": 10 ** 400},
     {"weights": [10 ** 400] + [0.0] * (len(FIXTURE["model"]["features"]) - 1)}])
 def test_load_refuses_bad_models(tmp_path, change):

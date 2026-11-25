@@ -174,10 +174,33 @@ def _valid(model) -> bool:
                 return False
             if float(scales[n]) <= 0:
                 return False
-        if not isinstance(model["imputations"], dict) or not isinstance(model["project_defaults"], dict):
+        imputations, defaults = model["imputations"], model["project_defaults"]
+        if not isinstance(imputations, dict) or not isinstance(defaults, dict):
+            return False
+        for k in IMPUTED:
+            if not _present(imputations.get(k)):
+                return False
+        for k in ("author_prior_prs_in_sample", "title_len", "body_len"):
+            v = defaults.get(k)
+            if v is not None and (not _present(v) or float(v) < 0):
+                return False
+        wd = defaults.get("created_weekday")
+        if wd is not None and (not _present(wd) or not (0 <= float(wd) <= 6)):
+            return False
+        hr = defaults.get("created_hour_utc")
+        if hr is not None and (not _present(hr) or not (0 <= float(hr) <= 23)):
+            return False
+        for k in ("draft", "body_has_issue_ref", "title_wip_marker"):
+            v = defaults.get(k)
+            if v is not None and not isinstance(v, bool):
+                return False
+        assoc = defaults.get("author_assoc")
+        if assoc is not None and not isinstance(assoc, str):
+            return False
+        if not math.isfinite(predict_proba(model, defaults)):
             return False
         return True
-    except (TypeError, ValueError, OverflowError):
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, OverflowError):
         return False
 
 
