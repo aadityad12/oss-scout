@@ -23,6 +23,7 @@ The tap is the point: a person looked at this and stands behind it.
 | --- | --- | --- |
 | about 9pm | **Scan**: finds and ranks issues, refreshes your PR and review history. No AI. | GitHub Actions in this repo (`nightly.yml`; GitHub often starts it hours late) |
 | right after the scan | **Routine**: a Claude cloud routine prepares at most one *ready* item plus up to two briefings, and drafts replies to reviews waiting on you. | Claude routines, started by the scan |
+| on demand | **Run again** starts an extra scan and routine. By default, one manual run is allowed per Pacific day, with a 60-minute wait after the nightly routine starts. | `nightly.yml` manual dispatch, with limits set in `targets.toml` |
 | 8am | **Email**: what couldn't send, what's ready to send, today's new recommendations, and any maintainer reply. Each item carries a field tag (e.g. *Embedded & firmware*) with a one-line reason, a short "About the project", three plain lines (what's broken, what you'd send, what you do and how long), "What we'll do" in a few steps, and one button. Sent only when there is something to say. | Cloudflare Worker cron |
 | Saturday 8am | **Weekly email**, "Worth doing on your laptop this week": the last week's briefings that need a laptop session, with the same three lines. Not sent when there are none. | Cloudflare Worker cron |
 | whenever you tap | **Act**: does the GitHub write you approved, as you. | `act.yml` in the data repo, started by the Worker |
