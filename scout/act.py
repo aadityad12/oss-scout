@@ -232,19 +232,26 @@ class Job:
 sane_ref = failures.sane_ref
 
 
-def check_text(title: str | None, body: str | None, disclosure: str | None = None) -> None:
-    def rejected(why: str):
-        raise Failure("text_rejected", "Couldn't send: the edited text was turned down.", why[0].upper() + why[1:])
+def text_problems(title: str | None, body: str | None, disclosure: str | None = None) -> list[str]:
+    """Return every validation problem with PR/comment text in plain words."""
+    problems = []
     if title is not None:
         if not title.strip() or "\n" in title or len(title) > MAX_TITLE:
-            rejected(f"the title must be one line, 1-{MAX_TITLE} characters")
+            problems.append(f"the title must be one line, 1-{MAX_TITLE} characters")
     if body is not None:
         if not body.strip() or len(body) > MAX_BODY:
-            rejected(f"the text must be 1-{MAX_BODY} characters")
+            problems.append(f"the text must be 1-{MAX_BODY} characters")
         if disclosure and disclosure not in body:
-            rejected("the text must keep the AI-disclosure sentence this project requires")
+            problems.append("the text must keep the AI-disclosure sentence this project requires")
     if briefings.has_ai_marker(title or "", body or ""):
-        rejected("the text contains an AI marker")
+        problems.append("the text contains an AI marker")
+    return problems
+
+
+def check_text(title: str | None, body: str | None, disclosure: str | None = None) -> None:
+    if problems := text_problems(title, body, disclosure):
+        why = problems[0]
+        raise Failure("text_rejected", "Couldn't send: the edited text was turned down.", why[0].upper() + why[1:])
 
 
 def check_token(patch: str) -> None:

@@ -127,6 +127,7 @@ python3 -m scout render-public # build the public page
 python3 -m scout init-data     # install guard, settings and act.yml into the data dir
 python3 -m scout act --key owner/repo#123 --action submit --dry-run   # what a tap would do
 python3 -m scout act --key owner/repo#123 --action refresh --dry-run  # would a refresh be the same fix? (no tests run)
+python3 -m scout check-text --title 'Fix crash' < body.txt            # check title/body for AI markers, length and disclosure (offline)
 python3 -m scout refresh-check --key owner/repo#123 --out /tmp/out        # the workflow's no-secrets check
 ```
 

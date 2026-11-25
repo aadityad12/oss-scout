@@ -7,6 +7,7 @@
   python -m scout render         build data/dashboard.html and data/dashboard.json
   python -m scout render-public  build the public portfolio page
   python -m scout act            do what you tapped on the dashboard (runs in the data repo's act workflow)
+  python -m scout check-text     check PR/comment text for length, disclosure and AI markers (offline)
   python -m scout refresh-check  try an approved draft on the project's current code (the act workflow's no-secrets job)
   python -m scout refresh-apply  swap in the refreshed patch and record the result (before the normal submit)
   python -m scout refresh-request  record that a rebuild by the Claude step is wanted
@@ -24,8 +25,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, discover, fields, filters, rank, score, state as statemod, track, wip
-from .act import ACTIONS
+from . import briefings, config, discover, fields, filters, rank, score, state as statemod, track, wip
+from .act import ACTIONS, text_problems
 from .github import GitHub, RateLimited
 
 
@@ -238,6 +239,33 @@ def cmd_act(args, cfg, data, gh) -> None:
     sys.exit(run(cfg, data, args.key, args.action, args.title, body, args.dry_run))
 
 
+def cmd_check_text(args) -> int:
+    """Validate PR/comment text offline with zero disk or network side effects."""
+    if args.list_markers:
+        print(json.dumps(list(briefings.AI_MARKERS)))
+        return 0
+    if args.body_file is not None:
+        try:
+            body = Path(args.body_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"error: could not read {args.body_file}: {e}", file=sys.stderr)
+            return 2
+    elif not sys.stdin.isatty():
+        body = sys.stdin.read()
+    elif args.title is not None and args.disclosure is None:
+        body = None
+    else:
+        body = sys.stdin.read()
+    problems = text_problems(args.title, body, args.disclosure)
+    if args.json:
+        print(json.dumps({"ok": not problems, "problems": problems}))
+    elif problems:
+        print("\n".join(problems))
+    else:
+        print("ok")
+    return 1 if problems else 0
+
+
 def cmd_refresh_check(args, cfg, data, gh) -> None:
     from . import refresh
     try:
@@ -292,6 +320,12 @@ def main(argv: list[str] | None = None) -> None:
     ac.add_argument("--title", default=None, help="edited PR title (or commit message for a follow-up)")
     ac.add_argument("--body-file", default=None, help="file with the edited PR body or comment")
     ac.add_argument("--dry-run", action="store_true", help="run the checks and print the plan; write nothing")
+    ct = sub.add_parser("check-text")
+    ct.add_argument("--title", default=None, help="PR title or commit message to check")
+    ct.add_argument("--disclosure", default=None, help="required AI-disclosure sentence")
+    ct.add_argument("--body-file", default=None, help="file with PR body or comment (otherwise read stdin)")
+    ct.add_argument("--json", action="store_true", help="print result as JSON")
+    ct.add_argument("--list-markers", action="store_true", help="print the AI-marker list as JSON and exit")
     rc = sub.add_parser("refresh-check")
     rc.add_argument("--key", required=True, help="owner/repo#123")
     rc.add_argument("--out", required=True, help="directory for new.patch and verdict.json")
@@ -309,6 +343,8 @@ def main(argv: list[str] | None = None) -> None:
     rp.add_argument("--out", default=None, help="output dir (default: <data_dir>/site)")
     rp.add_argument("--domain", default=None, help="custom domain, written as CNAME")
     args = p.parse_args(argv)
+    if args.cmd == "check-text":
+        sys.exit(cmd_check_text(args))
 
     cfg = config.load()
     data = config.data_dir()
